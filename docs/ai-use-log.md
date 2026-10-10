@@ -20,6 +20,7 @@ Undisclosed AI code generation is considered an academic integrity violation. Di
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **10/10/2026** | Đặng Xuân Phát | Gemini 3.6 Flash | Structure UI architecture & sitemap for `ui/README.md` | Adapted sitemap to HCMUS Q5 context; refined 6 screen wireframe specs | Manually checked against `Promptational Thinking.md` functional requirements |
 | **10/10/2026** | Đặng Xuân Phát | Gemini 3.6 Flash | Draft setup failure recovery log `setup_failure_log.md` | Formatted error tracebacks for PowerShell & Python venv | Tested recovery script commands locally via terminal |
+| **10/10/2026** | Đặng Xuân Phát | Gemini 3.6 Flash | Refactor Python Bootcamp W1 functions (`grades`, `text_tools`, `rules`, `translate`, `timetable`) | Added strict type hints, docstrings, and edge-case guards | Executed `pytest` suite locally; 24/24 unit tests passed (100% pass rate) |
 
 ---
 
