@@ -1,20 +1,73 @@
 # Study Assistant — starter
 
-A starter repository for the CSC10014 Smart Virtual Assistant project.
+A rule-based study assistant for the CSC10014 Smart Virtual Assistant project. It helps students find campus office locations and operational hours from the command line.
+
+## Prerequisites
+
+- Python >= 3.10
+- Git
 
 ## Setup
 
-TODO (Lab 1): write the exact steps a new teammate needs, from a fresh machine to
-running the app and the tests. Your partner will follow them without your help.
+Clone the repository and prepare your isolated virtual environment:
+
+```bash
+git clone git@github.com:khanhf-ng820/assistant-team07.git
+cd assistant-team07
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows PowerShell: .venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+pip install -e .
+```
+
+Verify your environment configuration:
+
+```bash
+python scripts/check_env.py
+```
 
 ## Run
 
-TODO
+Ask a single question directly via the command line:
+
+```bash
+python -m assistant "where is the training office?"
+# Output: Training Office: room I.101, open Mon-Fri 07:30-16:30.
+```
+
+Or enter interactive mode (type `quit` to exit):
+
+```bash
+python -m assistant
+# Study assistant (starter). Type 'quit' to exit.
+# > hi
+# Hello! Ask me where an office is, or when it opens.
+# > quit
+```
 
 ## Test
 
-TODO
+Run automated smoke tests using pytest:
+
+```bash
+pytest -q
+```
+
+Expected result: all unit tests pass (e.g., `4 passed`).
 
 ## Project structure
 
-TODO
+- `data/`: Small, non-sensitive sample datasets (`offices.csv`).
+- `docs/`: Project documentation, reports, and worksheets.
+- `scripts/`: Development and environment helper scripts (`check_env.py`).
+- `src/`: Core application package (`assistant`).
+- `tests/`: Automated unit and smoke test suites (`test_smoke.py`).
+- `ui/`: User interface components and documentation.
+
+## Troubleshooting
+
+- **`No module named assistant`**: Ensure the virtual environment is active (`source .venv/bin/activate`) and you installed the package in editable mode with `pip install -e .`.
+- **PowerShell blocks script execution on Windows**: Run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` before running `.venv\Scripts\Activate.ps1`, or use Git Bash.
+- **Python command not found**: On macOS/Linux, try `python3`; on Windows, try `py`.
+- **Environment check failure**: Run `python scripts/check_env.py` to identify missing packages or configuration errors.
