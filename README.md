@@ -12,7 +12,9 @@ A rule-based study assistant for the CSC10014 Smart Virtual Assistant project. I
 Clone the repository and prepare your isolated virtual environment:
 
 ```bash
-git clone git@github.com:khanhf-ng820/assistant-team07.git
+# Clone via HTTPS (recommended) or SSH
+git clone https://github.com/khanhf-ng820/assistant-team07.git
+# or: git clone git@github.com:khanhf-ng820/assistant-team07.git
 cd assistant-team07
 python3 -m venv .venv
 source .venv/bin/activate  # On Windows PowerShell: .venv\Scripts\Activate.ps1
@@ -54,7 +56,7 @@ Run automated smoke tests using pytest:
 pytest -q
 ```
 
-Expected result: all unit tests pass (e.g., `4 passed`).
+Expected result: all unit tests pass (e.g., `6 passed`).
 
 ## Project structure
 
