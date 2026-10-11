@@ -38,10 +38,18 @@ check("README has no TODO left", "TODO" not in readme, "Lab 1 step 5: write the 
 if shutil.which("git") and (root / ".git").exists():
     email = subprocess.run(["git", "config", "user.email"], capture_output=True, text=True, cwd=root).stdout.strip()
     check(f"git user.email set ({email or 'missing'})", bool(email), "git config --global user.email ...")
+offices_csv = root / "data" / "offices.csv"
+check(
+    "data/offices.csv exists and is non-empty",
+    offices_csv.exists() and offices_csv.stat().st_size > 0,
+    "add office records to data/offices.csv",
+)
 sys.path.insert(0, str(root / "src"))
 try:
-    from assistant.rules import reply
+    from assistant.rules import load_offices, reply
 
+    offices = load_offices()
+    check("offices dataset loads correctly", len(offices) > 0, "check data/offices.csv format")
     check("starter app imports and answers", "Hello" in reply("hi"))
 except Exception as exc:  # noqa: BLE001 - report any import problem
     check("starter app imports and answers", False, repr(exc))
