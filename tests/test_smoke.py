@@ -30,3 +30,18 @@ def test_greeting_case_insensitive():
     assert "Hello" in reply("HI")
     assert "Hello" in reply("HeLLo")
     assert "Hello" in reply("   hi   ")
+
+
+def test_office_lookup_case_insensitive():
+    """Check office lookup with uppercase input."""
+    result = reply("WHERE IS THE LIBRARY?")
+    assert "Library" in result
+    assert "B.201" in result
+    assert "Mon-Sat 07:00-20:00" in result
+
+
+def test_office_lookup_with_punctuation():
+    """Check office lookup with trailing punctuation."""
+    result = reply("Where is Student Affairs?!")
+    assert "Student Affairs" in result
+    assert "I.102" in result
