@@ -1,4 +1,4 @@
-from assistant.rules import reply
+from assistant.rules import reply, load_offices
 
 
 def test_greeting():
@@ -45,3 +45,24 @@ def test_office_lookup_with_punctuation():
     result = reply("Where is Student Affairs?!")
     assert "Student Affairs" in result
     assert "I.102" in result
+
+
+def test_load_offices_csv():
+    """Check that office information loads correctly from CSV."""
+    offices = load_offices()
+
+    assert "training office" in offices
+    assert offices["training office"]["room"] == "I.101"
+    assert offices["training office"]["hours"] == "Mon-Fri 07:30-16:30"
+
+
+def test_office_csv_required_fields():
+    """Check that all office records contain required information."""
+    offices = load_offices()
+
+    assert len(offices) > 0
+
+    for name, office in offices.items():
+        assert name == office["name"].lower()
+        assert office["room"].strip()
+        assert office["hours"].strip()
