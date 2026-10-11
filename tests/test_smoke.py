@@ -25,6 +25,16 @@ def test_international_office_lookup():
     assert "F.203" in reply("When does the International Office open?")
 
 
+def test_help_command():
+    assert "I can help you find offices" in reply("help")
+    assert "where is the library?" in reply("Help")
+
+
+def test_greeting_good_morning():
+    assert "Hello" in reply("good morning")
+    assert "Hello" in reply("Good Morning!")
+
+
 def test_greeting_case_insensitive():
     """Check greetings with mixed case and extra spaces."""
     assert "Hello" in reply("HI")

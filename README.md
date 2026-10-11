@@ -56,7 +56,7 @@ Run automated smoke tests using pytest:
 pytest -q
 ```
 
-Expected result: all unit tests pass (e.g., `6 passed`).
+Expected result: all unit tests pass (e.g., `13 passed`).
 
 ## Project structure
 
