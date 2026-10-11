@@ -23,3 +23,10 @@ def test_health_center_lookup():
 
 def test_international_office_lookup():
     assert "F.203" in reply("When does the International Office open?")
+
+
+def test_greeting_case_insensitive():
+    """Check greetings with mixed case and extra spaces."""
+    assert "Hello" in reply("HI")
+    assert "Hello" in reply("HeLLo")
+    assert "Hello" in reply("   hi   ")
