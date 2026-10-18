@@ -58,6 +58,16 @@ pytest -q
 
 Expected result: all unit tests pass (e.g., `13 passed`).
 
+## Evaluate
+
+Run the accuracy benchmark against `eval/cases.csv`:
+
+```bash
+python eval/run.py
+```
+
+Expected output when all benchmark answers match: `Accuracy: 15/15 (100.0%)`.
+
 ## Project structure
 
 - `data/`: Small, non-sensitive sample datasets (`offices.csv`).
