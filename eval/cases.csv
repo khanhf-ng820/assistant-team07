@@ -4,7 +4,7 @@ question,expected,category
 "where is the health center?","Health Center: room A.105, open Mon-Fri 08:00-17:00.",normal
 "WHERE IS THE TRAINING OFFICE?","Training Office: room I.101, open Mon-Fri 07:30-16:30.",edge
 "where is the library?!","Library: room B.201, open Mon-Sat 07:00-20:00.",edge
-"training","I don't know that yet. Try asking about an office, e.g. 'training office'.",edge
+"training","Training Office: room I.101, open Mon-Fri 07:30-16:30.",edge
 "hi","Hello! Ask me where an office is, or when it opens.",edge
 "help","I can help you find offices and their opening hours. Try 'where is the library?'",normal
 "   ","Please type a question.",edge

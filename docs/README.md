@@ -9,6 +9,8 @@ This directory contains supporting documentation for the CSC10014 Smart Virtual 
 | `README.md` | Overview of project documentation and contribution guidelines. |
 | `team.md` | Team members, assigned roles, and responsibilities. |
 | [`ai-interface.md`](ai-interface.md) | Proposed future LLM interface: inputs, outputs, errors, and local fallback; no LLM calls in the current lab. |
+| [`ui-sources.md`](ui-sources.md) | UI design specification and mockups for source citations under assistant answers. |
+
 
 ## Planned Documentation
 
