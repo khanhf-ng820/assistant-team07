@@ -76,3 +76,22 @@ def test_office_csv_required_fields():
         assert name == office["name"].lower()
         assert office["room"].strip()
         assert office["hours"].strip()
+
+
+def test_partial_name_training():
+    """Check that typing 'training' finds 'Training Office'."""
+    result = reply("training")
+    assert "Training Office" in result
+    assert "I.101" in result
+
+
+def test_partial_name_in_question():
+    """Check that partial office names work inside questions or for other offices."""
+    result_training = reply("Where is training?")
+    assert "Training Office" in result_training
+    assert "I.101" in result_training
+
+    result_health = reply("health")
+    assert "Health Center" in result_health
+    assert "A.105" in result_health
+
