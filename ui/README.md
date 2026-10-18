@@ -1,140 +1,132 @@
 # User Interface Architecture & Design Specification
 
-**Project Name:** AI Student Budget & Food Planner  
-**Document Owner:** Đặng Xuân Phát (UI/UX Lead)  
+**Project Name:** Smart Virtual Assistant (FIT HCMUS)  
+**Document Owner:** Đặng Xuân Phát (UI/UX Lead, Team 07)  
 **Target Repository:** `assistant-team07/ui/README.md`  
-**Status:** Approved Specification (v0.1-setup)  
+**Status:** Approved Specification (v0.1-setup / Milestone M7 Roadmap)  
 
 ---
 
 ## 1. Executive Summary & Design Philosophy
 
-The **AI Student Budget & Food Planner** interface is engineered specifically for Vietnamese university students residing in dormitories or rented apartments with tight living budgets. Unlike conventional expense-tracking applications that merely record past expenditures, this UI acts as a **predictive decision-support system**. It seamlessly bridges financial constraints with daily dietary decisions.
+The **Smart Virtual Assistant** interface is engineered specifically for VNU-HCMUS students to query campus locations, academic regulations, tuition fees, and administrative procedures. Operating on a hybrid architecture (Deterministic Rules + RAG LLM Engine), the UI acts as a **transparent conversational decision-support interface** that provides instant, accurate answers with verifiable source attribution.
 
 ### Core UI Design Principles
-1. **Clarity & Financial Hygiene:** Display actionable figures (*Safe-to-Spend* and *Daily Budget*) prominently to eliminate cognitive fatigue.
-2. **Context-Aware Personalization:** Adapt interface elements dynamically based on user living conditions (e.g., cooking equipment available, dietary preferences, schedule density).
-3. **Frictionless Data Entry:** Minimize input steps using quick-action cards, OCR receipt scanning placeholders, and smart presets.
-4. **Rich & Modern Aesthetics:** Utilize sleek dark mode, HSL-tailored vibrant accents, subtle glassmorphism, and responsive micro-animations to deliver a state-of-the-art user experience.
+1. **Clarity & Factuality First:** Highlight authoritative sources (e.g., `data/offices.csv`, Student Handbooks) directly below generated answers to maintain high trust.
+2. **Deterministic & AI Hybrid Visibility:** Clearly indicate whether a response was generated via exact database lookup (Rule-based) or natural language synthesis (RAG/LLM).
+3. **Frictionless Querying:** Provide quick-prompt cards for frequent student queries (e.g., *Office hours*, *Retake fee calculation*, *Library location*).
+4. **Rich & Modern Aesthetics:** Utilize a clean Streamlit layout with HSL-tailored accents, structured markdown rendering, and interactive feedback widgets.
 
 ---
 
-## 2. Information Architecture (Sitemap)
+## 2. Technology Stack & Integration Architecture
 
+- **UI Framework:** [Streamlit](https://streamlit.io/) (Python-native UI framework, fully integrated with the project's `.venv`).
+- **Backend Bridge:** Direct Python module imports from `src/assistant/` (`rules.py`, `router.py`, `rag.py`).
+- **State Management:** `streamlit.session_state` for maintaining multi-turn chat history and feedback logs.
+
+---
+
+## 3. Detailed Screen Specifications & Components
+
+### 3.1. Main Chat Interface (`ChatWindow`)
+- **Objective:** Provide a seamless messaging environment for student queries.
+- **Key Components:**
+  - `ChatMessageList`: Chronological display of user prompts and assistant responses using Streamlit chat elements (`st.chat_message`).
+  - `QueryInputBox`: Fixed bottom input bar with auto-submit on Enter (`st.chat_input`).
+  - `StatusIndicator`: Visual spinner indicating pipeline processing stage (Intent Routing -> Vector Search -> Response Generation).
+
+### 3.2. Source Attribution & Citation Panel (`SourceBadge`)
+- **Objective:** Prevent hallucination confusion by displaying exact data origins.
+- **Key Components:**
+  - `DataOriginTag`: Badge showing the underlying data file (e.g., `📌 Source: data/offices.csv [Room I.101]`).
+  - `ConfidenceScore`: Visual indicator for RAG retrieval confidence[cite: 82].
+
+### 3.3. Interactive Feedback & Evaluation Widget (`FeedbackPanel`)
+- **Objective:** Collect user reaction data for system evaluation benchmarks (`eval/`).
+- **Key Components:**
+  - `ThumbRating`: One-click 👍 / 👎 buttons below each response[cite: 34].
+  - `CorrectionModal`: Optional text area for users to report incorrect office hours or room numbers.
+
+### 3.4. Sidebar Configuration (`SidebarControl`)
+- **Objective:** Allow administrative testing and system mode selection.
+- **Key Components:**
+  - `ModeSelector`: Toggle between **Auto-Router**, **Rule-Only**, and **RAG-Only** modes.
+  - `ClearHistoryButton`: Resets `session_state` chat context.
+  - `TeamMetadataCard`: Displays current release version (`v0.1-setup`) and team member roles].
+
+
+
+## 4. UI Layout Blueprint (Streamlit ASCII Wireframe)
 ```
-[ Root View Controller ]
-   │
-   ├── 1. HomeScreen (Personalized Dashboard)
-   │     ├── Safe-to-Spend Banner & Daily Budget Gauge
-   │     ├── Quick Meal Recommendation Card
-   │     ├── Savings Goal Tracker
-   │     └── Event Alert & Recovery Notification
-   │
-   ├── 2. BudgetScreen (Smart Budget Management)
-   │     ├── Income & Expense Entry Form
-   │     ├── Categorical Expenditure Chart (Recharts / D3)
-   │     ├── Event Budget Allocator
-   │     └── Budget Recovery Adjustment Modal
-   │
-   ├── 3. RecipeScreen (AI Food & Meal Recommendation)
-   │     ├── Pantry-Matched Cooking Suggestions
-   │     ├── Cost-per-Meal & Cooking Time Indicator
-   │     ├── Step-by-Step Cooking Guide
-   │     └── Smart Grocery Checklist Generator
-   │
-   ├── 4. RestaurantScreen (HCMUS Q5 Localized Dining)
-   │     ├── Nearby Budget-Friendly Eateries
-   │     ├── Price Tier & Distance Filter
-   │     └── Student Discount & Rating Badge
-   │
-   ├── 5. PantryScreen (Food & Inventory Tracker)
-   │     ├── Fridge & Dry Pantry Inventory List
-   │     ├── Expiry Date Countdown & Color Alerts
-   │     └── Quick Add via Barcode / Text Input
-   │
-   └── 6. ProfileScreen (Personalization Engine Setup)
-         ├── Monthly Income & Saving Goals Setup
-         ├── Culinary Preferences & Allergies
-         ├── Kitchen Equipment Profile (Air Fryer, Electric Cooker, etc.)
-         └── Campus Location & Dormitory Profile
++-----------------------------------------------------------------------+
+|  Smart Virtual Assistant - Faculty of Information Technology HCMUS    |
++---------------------+-------------------------------------------------+
+| SIDEBAR CONTROL     | MAIN CHAT DISPLAY                               |
+|                     |                                                 |
+| [System Mode]       | [Assistant]: Xin chào! Tôi là Trợ lý ảo HCMUS.  |
+| (o) Auto-Router     |              Bạn cần tra cứu thông tin gì?      |
+| ( ) Rule-Based      |                                                 |
+| ( ) RAG Engine      | [User]: Phòng Đào tạo ở đâu và làm việc khi nào?|
+|                     |                                                 |
+| [Actions]           | [Assistant]: Phòng Đào tạo ở phòng I.101,       |
+| [ Clear Chat ]      |              mở cửa T2-T6 (07:30 - 16:30).      |
+|                     |              📌 Nguồn: data/offices.csv         |
+| [Team 07 Meta]      |              [ 👍 Hữu ích ]  [ 👎 Báo lỗi ]    |
+| Version: v0.1-setup |                                                 |
+| Status: Healthy     | [ Input: Nhập câu hỏi (ví dụ: Phòng CTTT)...  ] |
++---------------------+-------------------------------------------------+
 ```
 
+
+
+## 5. How to Run (Development & Execution Guide)
+
+### Prerequisites
+Ensure your Python virtual environment is activated and dependencies are installed:
+```bash
+# Activate virtual environment
+source .venv/bin/activate       # macOS / Linux / Git Bash
+# .venv\Scripts\Activate.ps1    # Windows PowerShell
+
+# Install project in editable mode
+pip install -e .
+Running the UI Application
+Bash
+# Launch Streamlit interface
+streamlit run ui/app.py
+```
 ---
+## 6. Design System & UI Tokens
+Primary Accent: hsl(217, 91%, 60%) (HCMUS Academic Blue)
 
-## 3. Detailed Screen Specifications & Wireframe Layouts
+Secondary Accent: hsl(158, 64%, 52%) (Success & Verified Source Green)
 
-### 3.1. HomeScreen (Personalized Dashboard)
-* **Objective:** Give students an instant 5-second snapshot of their financial health and today's meal guidance.
-* **Key Components:**
-  - `SafeToSpendCard`: Highlights net spendable balance after fixed costs and savings reserves.
-  - `DailyBudgetGauge`: Circular animated progress indicator displaying remaining budget for the day.
-  - `MealSuggestionWidget`: Dynamic card suggesting *Cook at Home* or *Eat Out* based on time and remaining funds.
-  - `RecoveryBanner`: Appears conditionally if yesterday's budget was exceeded, displaying the automated daily budget adjustment.
+Warning / Alert: hsl(38, 92%, 50%) (Ambiguous Query / Clarification Needed)
 
-### 3.2. BudgetScreen (Smart Budget Management)
-* **Objective:** Manage income sources (family allowance, part-time jobs, scholarships) and daily expenses.
-* **Key Components:**
-  - `TransactionList`: Chronological list with category badges (Food, Study, Transit, Entertainment).
-  - `CategoryPieChart`: Interactive visual breakdown of spending patterns.
-  - `EventPlannerWidget`: Input form for upcoming events (birthdays, club outings) to reserve funds in advance.
+Background Base: Streamlit Dark / Light Adaptive Theme
 
-### 3.3. RecipeScreen (AI Meal Recommendation)
-* **Objective:** Recommend affordable, healthy recipes tailored to existing pantry items and student constraints.
-* **Key Components:**
-  - `RecipeCardGrid`: Filterable grid showing recipe title, estimated cost (VND), prep time, and matching percentage with pantry ingredients.
-  - `PantryMatchBadge`: Shows ingredients available vs. ingredients needed.
-  - `GroceryExportButton`: One-tap export of missing ingredients to the Smart Grocery List.
+Typography: Inter, Roboto, sans-serif
 
-### 3.4. RestaurantScreen (HCMUS Q5 Localized Dining)
-* **Objective:** Help students eat out affordably near HCMUS Campus 1 (District 5).
-* **Key Components:**
-  - `EateryListView`: Distance-sorted cards showing dish recommendations under 35,000 VND / 50,000 VND.
-  - `DistanceBadge`: Walking distance indicator (e.g., "300m from I-building").
-  - `BudgetFitIndicator`: Visual tag indicating whether the meal fits within the remaining *Meal Budget*.
+## 7. Academic AI Disclosure & Compliance Declaration
+### 7.1. Formal Statement of AI Assistance
+This User Interface specification and design architecture was developed with the assistance of Generative AI tools (Google Gemini / Advanced AI Coding Assistant) under strict human oversight, adhering to the academic integrity guidelines of course CSC10014: Computational Thinking (2026).   
 
-### 3.5. PantryScreen (Inventory Tracker)
-* **Objective:** Prevent food waste and optimize ingredient usage.
-* **Key Components:**
-  - `IngredientItemTile`: Tile displaying item name, quantity, and freshness status.
-  - `ExpiryBadge`: Color-coded indicator (Green: Fresh, Yellow: Use Soon within 2 days, Red: Expiring Today).
 
-### 3.6. ProfileScreen (Personalization Setup)
-* **Objective:** Train the `AI Personalization Engine` with individual constraints.
-* **Key Inputs:**
-  - Kitchen appliances checklist: `[x] Electric Rice Cooker`, `[x] Mini Fridge`, `[ ] Air Fryer`, `[ ] Gas Stove`.
-  - Dietary constraints: Vegetarian, Peanut Allergy, No Seafood.
-  - Target monthly saving goal (e.g., 500,000 VND).
+### 7.2. Methodology & Verification Protocol
+Structuring: Generative AI was utilized to format requirements into standard IEEE/ISO-compliant software interface design documentation templates.
 
----
+Human Inspection & Domain Adaptation: The generated layout structures were manually audited, refined, and customized by Đặng Xuân Phát to reflect the functional specifications of the assistant-team07 project (e.g., HCMUS campus office lookups, data/offices.csv integration).
 
-## 4. Design System & UI Tokens
+Verification Checklist:
 
-### 4.1. Color Palette (Dark Mode Base)
-- **Primary Accent:** `hsl(158, 64%, 52%)` (Emerald Green - Financial Growth & Fresh Food)
-- **Secondary Accent:** `hsl(217, 91%, 60%)` (Electric Blue - AI Intelligence)
-- **Warning / Alert:** `hsl(38, 92%, 50%)` (Amber Yellow - Expiry Warning / Budget Recovery)
-- **Background Dark:** `hsl(222, 47%, 11%)` (Deep Slate)
-- **Surface Card:** `hsl(217, 33%, 17%)` (Glassmorphic Surface with `backdrop-filter: blur(12px)`)
+[x] All screen definitions strictly map to the functional specifications in src/assistant/.
 
-### 4.2. Typography & Layout
-- **Font Family:** `Inter`, `Roboto`, `system-ui`, sans-serif.
-- **Grid System:** 12-column responsive grid for Desktop/Web, 4-column responsive grid for Mobile Viewport.
-- **Transitions:** `transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1)`.
+[x] Component names align with system layout rules in Lab 01 guidelines.
 
----
+[x] No sensitive or personal student data was inputted or generated.   
 
-## 5. Academic AI Disclosure & Compliance Declaration
 
-### 5.1. Formal Statement of AI Assistance
-This User Interface specification and design architecture was developed with the assistance of Generative AI tools (Google Gemini 3.6 Flash / Advanced AI Coding Assistant) under strict human oversight and academic oversight, adhering to the guidelines of course **CSC10014: Computational Thinking (2026)**.
+Declared by: Đặng Xuân Phát (UI/UX Lead, Team 07)
 
-### 5.2. Methodology & Verification Protocol
-1. **Inspiration & Structuring:** Generative AI was prompted to synthesize raw project requirements from `Promptational Thinking.md` into standard IEEE/ISO-compliant software interface design documentation templates.
-2. **Human Inspection & Domain Adaptation:** The generated layout structures were manually audited, refined, and customized by **Đặng Xuân Phát** to reflect the specific socioeconomic context of HCMUS students (e.g., District 5 dining localization, dormitory appliance limitations).
-3. **Verification Checklist:**
-   - [x] All screen definitions strictly map to the functional specifications in `Promptational Thinking.md`.
-   - [x] Component names align with the system layout rules in Lab 01 guidelines.
-   - [x] No sensitive or personal student data was inputted or generated.
-
-*Declared by:* **Đặng Xuân Phát** (UI/UX Lead, Team 07)  
-*Date:* October 10, 2026  
+Date: October 18, 2026

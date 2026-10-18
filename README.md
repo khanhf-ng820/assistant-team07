@@ -48,6 +48,34 @@ python -m assistant
 # > quit
 ```
 
+
+### Help Command
+
+The assistant provides a built-in `help` command to display
+its supported features and usage instructions.
+
+Run the help command directly:
+
+```bash
+python -m assistant "help"
+```
+
+Expected output:
+
+```text
+I can help you find offices and their opening hours. Try 'where is the library?'
+```
+
+The help command is case-insensitive and accepts extra
+whitespace or trailing punctuation.
+
+You can also use it in interactive mode:
+
+```text
+> help
+I can help you find offices and their opening hours. Try 'where is the library?'
+```
+
 ## Test
 
 Run automated smoke tests using pytest:
@@ -57,6 +85,16 @@ pytest -q
 ```
 
 Expected result: all unit tests pass (e.g., `13 passed`).
+
+## Evaluate
+
+Run the accuracy benchmark against `eval/cases.csv`:
+
+```bash
+python eval/run.py
+```
+
+Expected output when all benchmark answers match: `Accuracy: 15/15 (100.0%)`.
 
 ## Project structure
 

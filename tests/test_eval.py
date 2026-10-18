@@ -1,9 +1,11 @@
 import csv
+import runpy
 from pathlib import Path
 from assistant.rules import reply
 
 ROOT = Path(__file__).resolve().parents[1]
 CASES_PATH = ROOT / "eval" / "cases.csv"
+RUNNER_PATH = ROOT / "eval" / "run.py"
 
 
 def test_cases_csv_exists_and_valid():
@@ -29,3 +31,10 @@ def test_cases_expected_answers_match_reply():
         for row in csv.DictReader(f):
             actual = reply(row["question"])
             assert actual == row["expected"], f"Mismatch for {row['question']!r}: {actual!r} != {row['expected']!r}"
+
+
+def test_benchmark_runner_executes(capsys):
+    assert RUNNER_PATH.is_file(), f"Missing runner script: {RUNNER_PATH}"
+    runpy.run_path(str(RUNNER_PATH), run_name="__main__")
+    captured = capsys.readouterr()
+    assert "Accuracy: 15/15 (100.0%)" in captured.out
