@@ -25,9 +25,21 @@ def test_international_office_lookup():
     assert "F.203" in reply("When does the International Office open?")
 
 
-def test_help_command():
+
+def test_help():
+    """Check that the help command handles common input variations."""
     assert "I can help you find offices" in reply("help")
     assert "where is the library?" in reply("Help")
+
+    # Case-insensitive input
+    assert "I can help you find offices" in reply("HELP")
+
+    # Leading and trailing whitespace
+    assert "I can help you find offices" in reply("  help  ")
+
+    # Trailing punctuation
+    assert "I can help you find offices" in reply("help?!")
+
 
 
 def test_greeting_good_morning():
