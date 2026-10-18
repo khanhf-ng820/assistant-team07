@@ -48,6 +48,34 @@ python -m assistant
 # > quit
 ```
 
+
+### Help Command
+
+The assistant provides a built-in `help` command to display
+its supported features and usage instructions.
+
+Run the help command directly:
+
+```bash
+python -m assistant "help"
+```
+
+Expected output:
+
+```text
+I can help you find offices and their opening hours. Try 'where is the library?'
+```
+
+The help command is case-insensitive and accepts extra
+whitespace or trailing punctuation.
+
+You can also use it in interactive mode:
+
+```text
+> help
+I can help you find offices and their opening hours. Try 'where is the library?'
+```
+
 ## Test
 
 Run automated smoke tests using pytest:
