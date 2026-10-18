@@ -18,10 +18,14 @@ Undisclosed AI code generation is considered an academic integrity violation. Di
 
 | Date | Author | AI Tool | Task / Prompt Goal | Kept / Modified Code | Human Verification Method |
 | :--- | :--- | :--- | :--- | :--- | :--- |
+| **18/10/2026** | Trần Phúc Khánh (issue #9) | OpenAI Codex | Specify the future LLM interface without provider calls | Drafted `docs/ai-interface.md` with typed signatures, input/output contracts, errors, fallback, and local examples; added the docs index link | Codex executed the examples and regression suite; human author and reviewer inspection pending |
 | **10/10/2026** | Đặng Xuân Phát | Gemini 3.6 Flash | Structure UI architecture & sitemap for `ui/README.md` | Adapted sitemap to HCMUS Q5 context; refined 6 screen wireframe specs | Manually checked against `Promptational Thinking.md` functional requirements |
 | **10/10/2026** | Đặng Xuân Phát | Gemini 3.6 Flash | Draft setup failure recovery log `setup_failure_log.md` | Formatted error tracebacks for PowerShell & Python venv | Tested recovery script commands locally via terminal |
 | **10/10/2026** | Đặng Xuân Phát | Gemini 3.6 Flash | Refactor Python Bootcamp W1 functions (`grades`, `text_tools`, `rules`, `translate`, `timetable`) | Added strict type hints, docstrings, and edge-case guards | Executed `pytest` suite locally; 24/24 unit tests passed (100% pass rate) |
+| **18/10/2026** | Trần Phúc Khánh (issue #8) | OpenAI Codex | Document data sources, owners, and update frequency | Added a file inventory to `data/README.md`; retained sample-data status and existing security guidance | Codex checked the tracked inventory, CSV, loader, and regression suite; human author and reviewer inspection pending |
+| **18/10/2026** | Lý Tuấn Kiệt | Gemini 3.8 Flash | Support partial office name lookup in backend (`rules.py`) | Implemented clean name and substring partial matching logic in `rules.py`; added unit tests in `test_smoke.py` | Ran pytest suite (15/15 passed), check_env.py, and manual CLI verification |
 | **18/10/2026** | Lý Tuấn Kiệt | Gemini 3.8 Flash | Design how citations appear under answers (`docs/ui-sources.md`) | Drafted citation data schema, ASCII wireframes, Markdown mockups with 2 examples, and Streamlit implementation code | Verified Markdown rendering, reviewed alignment with Lab 02 acceptance criteria and DoD |
+
 
 
 ---
