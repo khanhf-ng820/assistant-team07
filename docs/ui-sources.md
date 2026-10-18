@@ -176,6 +176,7 @@ The citation block rendered below each assistant message consists of 4 atomic el
 Below is the reference Python implementation for rendering the citation cards in the Streamlit web interface:
 
 ```python
+import html
 import streamlit as st
 
 
@@ -188,13 +189,19 @@ def render_citation(citation: dict) -> None:
     icon = "📌" if source_type == "structured_csv" else "📚"
     badge_label = "CSDL Xác thực (100%)" if source_type == "structured_csv" else f"RAG Match ({citation.get('confidence_score', 0):.1%})"
 
+    # Sanitize dynamic inputs with html.escape to prevent XSS / HTML injection in unsafe_allow_html
+    safe_file_path = html.escape(str(citation.get("file_path", "")))
+    safe_icon = html.escape(str(icon))
+    safe_badge_label = html.escape(str(badge_label))
+    safe_ref_location = html.escape(str(citation.get("reference_location", "")))
+
     with st.container():
         st.markdown(
             f"""
             <div style="border-left: 3px solid #22c55e; padding-left: 12px; margin-top: 10px; background-color: rgba(34, 197, 94, 0.05); border-radius: 4px; padding-top: 6px; padding-bottom: 6px;">
-                <span style="font-size: 0.85rem; font-weight: 600; color: #16a34a;">{icon} NGUỒN: {citation.get('file_path')}</span>
-                <span style="float: right; font-size: 0.75rem; background-color: #dcfce7; color: #15803d; padding: 2px 8px; border-radius: 12px;">{badge_label}</span>
-                <div style="font-size: 0.8rem; color: #4b5563; margin-top: 4px;">{citation.get('reference_location')}</div>
+                <span style="font-size: 0.85rem; font-weight: 600; color: #16a34a;">{safe_icon} NGUỒN: {safe_file_path}</span>
+                <span style="float: right; font-size: 0.75rem; background-color: #dcfce7; color: #15803d; padding: 2px 8px; border-radius: 12px;">{safe_badge_label}</span>
+                <div style="font-size: 0.8rem; color: #4b5563; margin-top: 4px;">{safe_ref_location}</div>
             </div>
             """,
             unsafe_allow_html=True,
