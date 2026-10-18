@@ -76,3 +76,8 @@ def test_office_csv_required_fields():
         assert name == office["name"].lower()
         assert office["room"].strip()
         assert office["hours"].strip()
+def test_new_offices_lookup():
+    from assistant.rules import reply
+    assert "A.02" in reply("where is testing & quality assurance?")
+    assert "B.04" in reply("where is youth union office?")
+    
