@@ -8,6 +8,7 @@ This directory contains supporting documentation for the CSC10014 Smart Virtual 
 |---|---|
 | `README.md` | Overview of project documentation and contribution guidelines. |
 | `team.md` | Team members, assigned roles, and responsibilities. |
+| [`ui-sources.md`](ui-sources.md) | UI design specification and mockups for source citations under assistant answers. |
 
 ## Planned Documentation
 
