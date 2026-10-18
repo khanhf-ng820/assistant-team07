@@ -25,9 +25,21 @@ def test_international_office_lookup():
     assert "F.203" in reply("When does the International Office open?")
 
 
-def test_help_command():
+
+def test_help():
+    """Check that the help command handles common input variations."""
     assert "I can help you find offices" in reply("help")
     assert "where is the library?" in reply("Help")
+
+    # Case-insensitive input
+    assert "I can help you find offices" in reply("HELP")
+
+    # Leading and trailing whitespace
+    assert "I can help you find offices" in reply("  help  ")
+
+    # Trailing punctuation
+    assert "I can help you find offices" in reply("help?!")
+
 
 
 def test_greeting_good_morning():
@@ -87,3 +99,22 @@ def test_new_offices_lookup():
     assert "A.103" in reply("where is educational testing office?")
 
     
+
+
+def test_partial_name_training():
+    """Check that typing 'training' finds 'Training Office'."""
+    result = reply("training")
+    assert "Training Office" in result
+    assert "I.101" in result
+
+
+def test_partial_name_in_question():
+    """Check that partial office names work inside questions or for other offices."""
+    result_training = reply("Where is training?")
+    assert "Training Office" in result_training
+    assert "I.101" in result_training
+
+    result_health = reply("health")
+    assert "Health Center" in result_health
+    assert "A.105" in result_health
+
