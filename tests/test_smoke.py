@@ -78,6 +78,12 @@ def test_office_csv_required_fields():
         assert office["hours"].strip()
 def test_new_offices_lookup():
     from assistant.rules import reply
+    
     assert "A.02" in reply("where is testing & quality assurance?")
+    assert "B.03" in reply("where is postgraduate studies?")
     assert "B.04" in reply("where is youth union office?")
+    assert "H.101" in reply("where is dormitory management office?")
+    assert "E.102" in reply("where is center for it application?")
+    assert "A.103" in reply("where is educational testing office?")
+
     
