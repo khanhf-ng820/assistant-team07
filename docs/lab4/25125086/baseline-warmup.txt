@@ -1,0 +1,56 @@
+.FFFF                                                                    [100%]
+=================================== FAILURES ===================================
+________________________________ test_p2_hello _________________________________
+
+    def test_p2_hello():
+>       assert client.get("/hello/Lan").json() == {"message": "Hello, Lan!"}
+E       AssertionError: assert {'message': 'TODO'} == {'message': 'Hello, Lan!'}
+E
+E         Differing items:
+E         {'message': 'TODO'} != {'message': 'Hello, Lan!'}
+E         Use -v to get more diff
+
+lab04/practice/test_hello_api.py:14: AssertionError
+________________________________ test_p3_square ________________________________
+
+    def test_p3_square():
+>       assert client.get("/square?n=7").json() == {"n": 7, "square": 49}
+E       AssertionError: assert {} == {'n': 7, 'square': 49}
+E
+E         Right contains 2 more items:
+E         {'n': 7, 'square': 49}
+E         Use -v to get more diff
+
+lab04/practice/test_hello_api.py:18: AssertionError
+_________________________________ test_p4_add __________________________________
+
+    def test_p4_add():
+        r = client.post("/add", json={"a": 2, "b": 3})
+>       assert r.status_code == 200 and r.json() == {"sum": 5}
+E       AssertionError: assert (200 == 200 and {} == {'sum': 5}
+E        +  where 200 = <Response [200 OK]>.status_code
+E
+E         Right contains 1 more item:
+E         {'sum': 5}
+E         Use -v to get more diff)
+
+lab04/practice/test_hello_api.py:24: AssertionError
+________________________________ test_p5_course ________________________________
+
+    def test_p5_course():
+>       assert client.get("/courses/CSC10014").json()["name"] == "Computational Thinking"
+E       KeyError: 'name'
+
+lab04/practice/test_hello_api.py:28: KeyError
+=============================== warnings summary ===============================
+lab04/starter/.venv/lib/python3.12/site-packages/starlette/testclient.py:40
+  /Users/admin/Desktop/HK1 Year2/CS252 CT/assistant-team07/lab04/starter/.venv/lib/python3.12/site-packages/starlette/testclient.py:40: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = typing.Callable[[], typing.ContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED lab04/practice/test_hello_api.py::test_p2_hello - AssertionError: asse...
+FAILED lab04/practice/test_hello_api.py::test_p3_square - AssertionError: ass...
+FAILED lab04/practice/test_hello_api.py::test_p4_add - AssertionError: assert...
+FAILED lab04/practice/test_hello_api.py::test_p5_course - KeyError: 'name'
+4 failed, 1 passed, 1 warning in 2.57s

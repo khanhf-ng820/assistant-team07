@@ -1,0 +1,3 @@
+Browser automation: actual Swagger UI POST /v1/chat
+HTTP 200
+{"answer":"Your tuition is 9,450,000 VND.","intent":"fee","sources":[],"degraded":false,"request_id":"e8f43c7e344c"}
