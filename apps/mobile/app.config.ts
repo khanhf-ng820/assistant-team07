@@ -7,7 +7,7 @@ const config: ExpoConfig = {
   scheme: 'carenta-placeholder',
   orientation: 'portrait',
   userInterfaceStyle: 'light',
-  platforms: ['android'],
+  platforms: ['android', 'ios'],
   icon: './assets/icon.png',
   plugins: ['expo-router'],
 };
