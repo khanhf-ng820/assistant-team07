@@ -14,7 +14,7 @@ What exists today:
 - Git
 - Node.js and npm — Node **24.x** is recommended; tested with Node `24.19.0` and npm `12.0.1`
 - [`uv`](https://docs.astral.sh/uv/getting-started/installation/) and Python **3.12**
-- An Android phone with **Expo Go supporting SDK 58**
+- An Android phone or iPhone with **Expo Go supporting SDK 58**
 - The phone and development computer on the same trusted Wi-Fi network
 
 No API keys are required for the current scaffold. Do not add real receipts, audio, personal balances, or credentials to the repository.
@@ -85,7 +85,12 @@ cd apps/mobile
 npm start -- --lan
 ```
 
-Scan the QR code with Expo Go on Android. On the **Thống kê** tab, tap **Kiểm tra kết nối**; a successful request displays **API đã kết nối**.
+Connect your device:
+- **Android**: Scan the QR code directly with the Expo Go app.
+- **iOS**: Scan the QR code using the native **Camera app** (tap the banner to open in Expo Go), or open Expo Go and enter the `exp://...` URL manually.
+- **iOS Simulator (macOS)**: For local simulated devices (requires full Xcode), see [`apps/mobile/README.md`](apps/mobile/README.md).
+
+On the **Thống kê** tab, tap **Kiểm tra kết nối**; a successful request displays **API đã kết nối**.
 
 The app still opens without `.env`, but it reports that the API is not configured. If you change `.env`, restart Metro:
 
@@ -101,7 +106,7 @@ The current scaffold is intentionally incomplete:
 
 - **Working:** two-tab navigation, the shared plus/capture chooser, disabled capture options, and the API health check.
 - **Not implemented:** manual transactions, receipt OCR, voice entry, review/confirmation, real dashboard data, reports, spending calendar, savings, AI insights, alerts, authentication, database, Supabase, and Gemini.
-- **Not available:** an installable APK or iOS build. This scaffold runs through Expo Go on Android.
+- **Not available:** an installable standalone APK or IPA. This scaffold runs through Expo Go on Android and iOS.
 
 For setup failures, see [Troubleshooting](#troubleshooting). For planned behavior and delivery gates, read [`docs/carenta-implementation-plan.md`](docs/carenta-implementation-plan.md). Follow [`CONTRIBUTING.md`](CONTRIBUTING.md) for issues and pull requests.
 
@@ -160,4 +165,4 @@ There is no root npm workspace. Install and run mobile commands only inside `app
 - **`uv` is not installed:** install it from the link in [Prerequisites](#prerequisites); `uv sync` can provision Python 3.12.
 - **Port 8000 is already in use:** choose another port in the Uvicorn command and update `EXPO_PUBLIC_API_URL` to match.
 - **You see `No module named assistant`:** you are running the legacy root assistant. It is not part of CARENTA; use the scoped mobile and API commands above.
-- **You need an installable app:** an APK/native build is not configured yet. The current app is an Expo Go scaffold.
+- **You need an installable app:** an APK/IPA native build is not configured yet. The current app is an Expo Go scaffold.
