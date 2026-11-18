@@ -20,9 +20,29 @@ root virtual environment. Dependencies are recorded in `uv.lock`.
 - Interactive API documentation: `http://localhost:8000/docs`
 - Response: `{"status":"ok","service":"carenta-api"}`
 
-This checks only that this process responds. There is no database, authentication,
-financial logic, Gemini integration, media upload, or ledger endpoint.
+This checks only that this process responds. There is no authentication,
+financial logic, Gemini integration, media upload, or ledger endpoint yet.
 `/v1/transactions` intentionally returns 404.
+
+## Database schema and secrets (issue #42)
+
+The Supabase schema lives in `supabase/migrations/` at the repository root:
+`profiles`, `transactions`, `commitments` (planned events), `goals` (Heo đất)
+and `goal_allocations` (Lịch sử đút heo), with integer-VND constraints and
+owner-only row-level security. Apply it with the Supabase CLI
+(`supabase db push`) or by running the SQL file in the project's SQL editor.
+
+Supabase credentials are read only by this backend:
+
+```sh
+cp services/carenta-api/.env.example services/carenta-api/.env   # then fill in values
+uv run --env-file services/carenta-api/.env --project services/carenta-api uvicorn app.main:app --app-dir services/carenta-api --port 8000
+```
+
+`.env` is ignored by Git. `app/settings.py` wraps the keys in `SecretStr` so
+they do not appear in logs or `repr`. The service-role key bypasses RLS: never
+copy it into `apps/mobile` or an `EXPO_PUBLIC_*` variable; a test checks that the
+mobile sources do not reference it.
 
 ## Phone connection
 
