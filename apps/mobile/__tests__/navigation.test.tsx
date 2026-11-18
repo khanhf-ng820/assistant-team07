@@ -25,9 +25,14 @@ it.each(['Thống kê', 'Tiết kiệm'])('opens and closes the same chooser fro
   await fireEvent.press(screen.getByRole('tab', { name: tab }));
   await fireEvent.press(screen.getByRole('button', { name: 'Thêm giao dịch' }));
 
-  for (const method of ['Nhập thủ công', 'Quét hóa đơn', 'Ghi âm']) {
+  // Manual entry is activated in Phase 1 (Issue #45)
+  expect(screen.getByRole('button', { name: 'Nhập thủ công' })).toBeEnabled();
+
+  // OCR and Voice capture remain placeholders for Phase 2
+  for (const method of ['Quét hóa đơn', 'Ghi âm']) {
     expect(screen.getByRole('button', { name: `${method} — Chưa triển khai` })).toBeDisabled();
   }
+
   await fireEvent.press(screen.getByRole('button', { name: 'Đóng lựa chọn' }));
   expect(screen.queryByText('Chọn cách ghi giao dịch')).toBeNull();
   expect(screen.getByRole('tab', { name: tab })).toBeSelected();
