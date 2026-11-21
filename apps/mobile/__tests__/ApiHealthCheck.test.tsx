@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { AuthProvider } from '../src/auth/AuthContext';
 import { ApiHealthCheck } from '../src/components/ApiHealthCheck';
 
 const validResponse = {
@@ -68,4 +69,20 @@ it('times out after five seconds and offers retry', async () => {
   await act(async () => jest.advanceTimersByTime(5000));
   expect(screen.getByText('Không kết nối được API')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Thử lại' })).toBeEnabled();
+});
+
+it('uses the shared SDK client headers and works inside AuthProvider without auth headers on /health', async () => {
+  const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(validResponse as Response);
+  await render(
+    <AuthProvider isConfigured={false} baseUrl="http://example.test">
+      <ApiHealthCheck baseUrl="http://example.test" />
+    </AuthProvider>
+  );
+  await fireEvent.press(screen.getByRole('button', { name: 'Kiểm tra kết nối' }));
+  expect(await screen.findByText('API đã kết nối')).toBeVisible();
+  const [, init] = fetchSpy.mock.calls[0];
+  expect(init?.headers).toMatchObject({
+    Accept: 'application/json',
+    'X-Request-ID': expect.any(String),
+  });
 });

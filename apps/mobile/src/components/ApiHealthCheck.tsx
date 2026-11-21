@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { checkHealth } from '../api/health';
+import { createCarentaApiClient } from '../api/client';
+import { useOptionalAuth } from '../auth/AuthContext';
+import { apiBaseUrl as defaultApiBaseUrl } from '../config';
 import { colors, type } from '../theme';
 
 type ConnectionState = 'idle' | 'checking' | 'connected' | 'error';
@@ -13,6 +15,7 @@ const messages: Record<ConnectionState, string> = {
 };
 
 export function ApiHealthCheck({ baseUrl }: { baseUrl?: string }) {
+  const auth = useOptionalAuth();
   const [state, setState] = useState<ConnectionState>('idle');
   const pending = useRef<AbortController | null>(null);
 
@@ -26,14 +29,16 @@ export function ApiHealthCheck({ baseUrl }: { baseUrl?: string }) {
     const controller = new AbortController();
     pending.current = controller;
     setState('checking');
-    const timeout = setTimeout(() => controller.abort(), 5000);
+    const client =
+      auth && baseUrl === defaultApiBaseUrl
+        ? auth.apiClient
+        : createCarentaApiClient({ baseUrl });
     try {
-      await checkHealth(baseUrl, controller.signal);
+      await client.checkHealth(controller.signal);
       if (pending.current === controller) setState('connected');
     } catch {
       if (pending.current === controller) setState('error');
     } finally {
-      clearTimeout(timeout);
       if (pending.current === controller) pending.current = null;
     }
   }

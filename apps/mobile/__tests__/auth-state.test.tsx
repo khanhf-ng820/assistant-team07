@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { Text, Pressable, View } from 'react-native';
+import StatsScreen from '../app/(tabs)/index';
 import { createUserScopedReadCache } from '../src/api/readCache';
 import { AuthProvider, useAuth } from '../src/auth/AuthContext';
 import { createMemorySessionStorage } from '../src/auth/storage';
@@ -211,5 +212,40 @@ describe('AuthProvider and SignInGate', () => {
 
     expect(await screen.findByText('Đăng nhập CARENTA')).toBeVisible();
     await expect(storage.getSession()).resolves.toBeNull();
+  });
+
+  it('renders SessionStatusBar on StatsScreen in authenticated mode and signs out cleanly', async () => {
+    const validSession = makeSession();
+    const storage = createMemorySessionStorage(validSession);
+    const readCache = createUserScopedReadCache();
+    readCache.set('student-1', 'budget:summary:default', { safe_to_spend: 100000 });
+    const authGateway: AuthGateway = {
+      signInWithPassword: jest.fn(async () => validSession),
+      refreshSession: jest.fn(async () => validSession),
+      signOut: jest.fn(async () => {}),
+    };
+
+    await render(
+      <AuthProvider
+        isConfigured
+        storage={storage}
+        authGateway={authGateway}
+        readCache={readCache}
+        baseUrl="http://example.test"
+      >
+        <StatsScreen />
+      </AuthProvider>
+    );
+
+    expect(await screen.findByText('sv@hcmus.edu.vn')).toBeVisible();
+    const logoutBtn = screen.getByRole('button', { name: 'Đăng xuất' });
+    await fireEvent.press(logoutBtn);
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Đăng xuất' })).toBeNull();
+    });
+    expect(screen.queryByText('sv@hcmus.edu.vn')).toBeNull();
+    await expect(storage.getSession()).resolves.toBeNull();
+    expect(readCache.get('student-1', 'budget:summary:default')).toBeUndefined();
   });
 });
