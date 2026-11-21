@@ -16,13 +16,18 @@ uv run --project services/carenta-api uvicorn app.main:app --app-dir services/ca
 `uv` creates `services/carenta-api/.venv`; do not activate or replace the existing
 root virtual environment. Dependencies are recorded in `uv.lock`.
 
-- Health: `http://localhost:8000/health`
+- Health: `http://localhost:8000/health` (public)
+- Authenticated identity probe: `http://localhost:8000/api/v1/auth/me` (and `/v1/auth/me`)
 - Interactive API documentation: `http://localhost:8000/docs`
-- Response: `{"status":"ok","service":"carenta-api"}`
+- Health response: `{"status":"ok","service":"carenta-api"}`
 
-This checks only that this process responds. There is no database, authentication,
-financial logic, Gemini integration, media upload, or ledger endpoint.
-`/v1/transactions` intentionally returns 404.
+Issue #46 adds server-side Supabase JWT verification (`app/auth.py`) and structured `{ "error": { "code", "message", "request_id" } }` error responses with `X-Request-ID` tracing (`app/errors.py`). Copy `services/carenta-api/.env.example` to `services/carenta-api/.env` and pass `--env-file services/carenta-api/.env` when running `uv run`:
+
+```sh
+uv run --project services/carenta-api --env-file services/carenta-api/.env uvicorn app.main:app --app-dir services/carenta-api --host 0.0.0.0 --port 8000
+```
+
+For unauthenticated LAN testing without Supabase env vars configured, set `CARENTA_LOCAL_DEV_AUTH=true` in `.env` (automatically ignored whenever `SUPABASE_URL` or `SUPABASE_JWT_SECRET` is set). Financial ledger, budget, and database endpoints live in sibling Phase 1 issues (#42/#43).
 
 ## Phone connection
 
@@ -47,11 +52,7 @@ The explicit configuration isolates these tests from the legacy root suite.
 They exercise the real ASGI application through HTTPX, without a listening server
 or external services.
 
-Verified on 2026-11-05: locked dependency synchronization and all three API tests
-passed. The mobile TypeScript health client also reached a real local Uvicorn
-process. Review follow-up: the current response always includes both fields, but
-their model defaults make them optional in the generated OpenAPI schema; tighten
-that schema before using it for generated financial API contracts.
+Verified on 2026-11-05 (placeholder baseline: 3 tests) and extended for Issue #46 on 2026-11-21 (JWT auth + structured error envelope + `GET /api/v1/auth/me`, exercised through ASGI HTTPX tests). Note: OpenAPI schema for `HealthResponse` still uses field defaults (`status="ok"`, `service="carenta-api"`).
 
 The existing root tests are separately blocked by `ModuleNotFoundError: assistant`
 in `tests/test_eval.py` and `tests/test_smoke.py`. This template does not fix that

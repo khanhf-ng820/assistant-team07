@@ -10,14 +10,16 @@ budget application or a pixel-perfect implementation of its exported designs.
 - Two tabs: **Thống kê** and **Tiết kiệm**.
 - Shared plus button and dismissible capture chooser. Manual, receipt, and voice
   options are disabled and explicitly labeled **Chưa triển khai**.
-- On-demand API connection check on Thống kê: missing configuration, pending,
-  validated success, failure, retry, five-second timeout, and cancellation on
-  unmount. A failed check does not block navigation.
+- On-demand API connection check on Thống kê (`ApiHealthCheck`), typed Phase 1
+  SDK client (`src/api/`), encrypted Auth Session storage via `expo-secure-store`
+  (`src/auth/`), optional Supabase sign-in gate (`SignInGate`), Local Dev Mode
+  when Supabase public env vars are unset, and read-only Student-Identity-scoped
+  Offline Fallback cache (`src/api/readCache.ts`).
 - Initial teal/coral colors, native system font, safe areas and scrollable content.
 
-No real or fabricated financial values, persistence, authentication, Supabase,
-Gemini, camera/microphone/notification permissions, or API credentials are included.
-The icon is an Expo template asset, not the final CARENTA illustration.
+Financial ledger/savings UI screens, Gemini capture, database queries, and
+notifications remain tracked in sibling issues. No server-side secrets belong in
+`apps/mobile`.
 
 ## Requirements
 

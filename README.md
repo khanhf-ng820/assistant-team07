@@ -4,10 +4,10 @@ CARENTA is an AI-assisted student budget planner. This branch currently contains
 
 What exists today:
 
-- An Expo/React Native Android app with two tabs (**Thống kê** and **Tiết kiệm**), a shared capture chooser whose capture options are disabled, and an API connection check.
-- A FastAPI service that currently exposes only `GET /health`.
+- An Expo/React Native mobile app (Android and iOS via Expo Go) with two tabs (**Thống kê** and **Tiết kiệm**), a shared capture chooser whose capture options are still disabled, an API connection check, typed Phase 1 API contracts (`apps/mobile/src/api/`), encrypted session storage via `expo-secure-store` (`apps/mobile/src/auth/`), optional Supabase sign-in gate (`Local Dev Mode` when unconfigured), and a read-only Offline Fallback cache.
+- A FastAPI service exposing `GET /health`, server-side Supabase JWT verification (`AUTH_REQUIRED` / `AUTH_TOKEN_EXPIRED` / `AUTH_SERVICE_UNAVAILABLE` structured errors + `X-Request-ID`), and `GET /api/v1/auth/me` (`/v1/auth/me`).
 
-> **Repository status:** `apps/` and `services/` are currently untracked. Commit them before sharing this branch; a clone of the current commit will not contain the scaffold. The architecture and delivery plan is tracked at [`docs/carenta-implementation-plan.md`](docs/carenta-implementation-plan.md).
+> **Repository status:** Follow [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`GLOSSARY.md`](GLOSSARY.md). The architecture and delivery plan is tracked at [`docs/carenta-implementation-plan.md`](docs/carenta-implementation-plan.md), and architectural decisions live under [`docs/adr/`](docs/adr/).
 
 ## Prerequisites
 
@@ -17,11 +17,9 @@ What exists today:
 - An Android phone or iPhone with **Expo Go supporting SDK 58**
 - The phone and development computer on the same trusted Wi-Fi network
 
-No API keys are required for the current scaffold. Do not add real receipts, audio, personal balances, or credentials to the repository.
+For **Local Dev Mode** over LAN, no Supabase keys are required (`CARENTA_LOCAL_DEV_AUTH=true` in `services/carenta-api/.env` when testing protected routes locally without Supabase). When Supabase Auth is enabled, configure `services/carenta-api/.env` and optional `EXPO_PUBLIC_SUPABASE_*` values in `apps/mobile/.env`. Do not add real receipts, audio, personal balances, or credentials to the repository.
 
 ## Setup
-
-These instructions apply to the current `feat/carenta-placeholder` working tree. That branch exists only on the local machine, and `apps/` and `services/` are untracked, so a fresh clone cannot reproduce this scaffold until the code is committed and the branch is pushed.
 
 From the repository root, **install the API dependencies**:
 
@@ -29,7 +27,7 @@ From the repository root, **install the API dependencies**:
 uv sync --project services/carenta-api --locked --python 3.12
 ```
 
-`uv` creates `services/carenta-api/.venv`. Do not replace the legacy root virtual environment.
+`uv` creates `services/carenta-api/.venv`. Do not replace the legacy root virtual environment. Copy `services/carenta-api/.env.example` to `services/carenta-api/.env` if running with Supabase JWT validation or `CARENTA_LOCAL_DEV_AUTH=true`.
 
 **Install the mobile dependencies**:
 
@@ -58,10 +56,8 @@ Use the real address, not `localhost`, `127.0.0.1`, or `0.0.0.0`. Values prefixe
 Start the API first in a new terminal. From the repository root:
 
 ```bash
-uv run --project services/carenta-api uvicorn app.main:app \
-  --app-dir services/carenta-api \
-  --host 0.0.0.0 \
-  --port 8000
+uv run --project services/carenta-api --env-file services/carenta-api/.env \
+  uvicorn app.main:app --app-dir services/carenta-api --host 0.0.0.0 --port 8000
 ```
 
 Verify it in another terminal:
@@ -102,11 +98,11 @@ Expo's tunnel option tunnels Metro, not the local API.
 
 ### Help and status
 
-The current scaffold is intentionally incomplete:
+The current scaffold + integration layer:
 
-- **Working:** two-tab navigation, the shared plus/capture chooser, disabled capture options, and the API health check.
-- **Not implemented:** manual transactions, receipt OCR, voice entry, review/confirmation, real dashboard data, reports, spending calendar, savings, AI insights, alerts, authentication, database, Supabase, and Gemini.
-- **Not available:** an installable standalone APK or IPA. This scaffold runs through Expo Go on Android and iOS.
+- **Working:** two-tab navigation, the shared plus/capture chooser, disabled capture options, API health check, typed Phase 1 mobile API client contracts, encrypted mobile Supabase Auth state / Local Dev Mode, FastAPI JWT verification (`GET /api/v1/auth/me`), structured error envelopes, and user-scoped read-only Offline Fallback cache.
+- **Not implemented in this branch:** manual transaction UI, receipt OCR, voice entry, review/confirmation, live ledger/budget database endpoints (tracked in sibling Phase 1–3 issues #42/#43/#45+), Gemini insights, and push alerts.
+- **Not available:** an installable standalone APK or IPA. This app runs through Expo Go on Android and iOS.
 
 For setup failures, see [Troubleshooting](#troubleshooting). For planned behavior and delivery gates, read [`docs/carenta-implementation-plan.md`](docs/carenta-implementation-plan.md). Follow [`CONTRIBUTING.md`](CONTRIBUTING.md) for issues and pull requests.
 
@@ -115,10 +111,9 @@ For setup failures, see [Troubleshooting](#troubleshooting). For planned behavio
 Run the mobile checks from `apps/mobile`:
 
 ```bash
-npm test -- --runInBand
+npm run typecheck
+BROWSERSLIST=defaults npm test -- --runInBand
 ```
-
-Current scaffold: **4 test suites and 19 tests pass**.
 
 Run the API tests from the repository root:
 
@@ -127,8 +122,6 @@ uv run --project services/carenta-api python -m pytest \
   -c services/carenta-api/pyproject.toml \
   services/carenta-api/tests -q
 ```
-
-Current scaffold: **3 API tests pass**.
 
 Running `pytest` at the repository root targets the unrelated legacy assistant and fails with `ModuleNotFoundError: assistant`. Use the scoped commands above as the CARENTA baseline.
 
