@@ -21,9 +21,17 @@ import {
   parseTransactionList,
 } from './contracts';
 import { ApiError, normalizeHttpError } from './errors';
+import type { ReadCache } from './readCache';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const HEALTH_TIMEOUT_MS = 5_000;
+
+export interface CachedRead<T> {
+  data: T;
+  fromCache: boolean;
+  cachedAt?: number;
+  error?: ApiError;
+}
 
 export interface CarentaApiClientOptions {
   baseUrl?: string;
@@ -32,18 +40,32 @@ export interface CarentaApiClientOptions {
   onUnauthorized?: () => Promise<string | null>;
   timeoutMs?: number;
   generateRequestId?: () => string;
+  readCache?: ReadCache;
+  getCacheUserKey?: () => string | null | undefined;
 }
 
 export interface CarentaApiClient {
   checkHealth: (signal?: AbortSignal) => Promise<HealthResponse>;
   getAuthMe: (signal?: AbortSignal) => Promise<AuthIdentity>;
   getBudgetSummary: (query?: BudgetSummaryQuery, signal?: AbortSignal) => Promise<BudgetSummaryResponse>;
+  getBudgetSummaryWithFallback: (
+    query?: BudgetSummaryQuery,
+    signal?: AbortSignal
+  ) => Promise<CachedRead<BudgetSummaryResponse>>;
   configureBudget: (payload: BudgetConfigRequest, signal?: AbortSignal) => Promise<BudgetConfigResponse>;
   listTransactions: (query?: TransactionListQuery, signal?: AbortSignal) => Promise<TransactionListResponse>;
+  listTransactionsWithFallback: (
+    query?: TransactionListQuery,
+    signal?: AbortSignal
+  ) => Promise<CachedRead<TransactionListResponse>>;
   createTransaction: (payload: TransactionCreate, signal?: AbortSignal) => Promise<TransactionResponse>;
   getTransaction: (id: string, signal?: AbortSignal) => Promise<TransactionResponse>;
   listGoals: (today?: string, signal?: AbortSignal) => Promise<GoalResponse[]>;
   getActiveGoal: (today?: string, signal?: AbortSignal) => Promise<GoalResponse>;
+  getActiveGoalWithFallback: (
+    today?: string,
+    signal?: AbortSignal
+  ) => Promise<CachedRead<GoalResponse>>;
   setActiveGoal: (
     payload: GoalCreate,
     today?: string,
@@ -217,6 +239,60 @@ export function createCarentaApiClient(options: CarentaApiClientOptions): Carent
     return parse(parsedBody.data);
   }
 
+  async function readWithFallback<T>(
+    cacheKey: string,
+    fetcher: () => Promise<T>
+  ): Promise<CachedRead<T>> {
+    const userKey = options.getCacheUserKey?.() ?? null;
+    try {
+      const data = await fetcher();
+      if (options.readCache && userKey) {
+        options.readCache.set(userKey, cacheKey, data);
+      }
+      return { data, fromCache: false };
+    } catch (err) {
+      const offlineFailure =
+        err instanceof ApiError &&
+        (err.code === 'NETWORK_UNAVAILABLE' || err.code === 'TIMEOUT');
+      if (offlineFailure && options.readCache && userKey) {
+        const cached = options.readCache.get<T>(userKey, cacheKey);
+        if (cached) {
+          return {
+            data: cached.data,
+            fromCache: true,
+            cachedAt: cached.cachedAt,
+            error: err,
+          };
+        }
+      }
+      throw err;
+    }
+  }
+
+  const getBudgetSummary = (query?: BudgetSummaryQuery, signal?: AbortSignal) =>
+    requestJson(
+      `/api/v1/budget/summary${buildQuery({
+        today: query?.today,
+        days_remaining: query?.days_remaining,
+      })}`,
+      parseBudgetSummary,
+      { signal }
+    );
+
+  const listTransactions = (query?: TransactionListQuery, signal?: AbortSignal) =>
+    requestJson(
+      `/api/v1/transactions${buildQuery({
+        start_date: query?.start_date,
+        end_date: query?.end_date,
+        kind: query?.kind,
+      })}`,
+      parseTransactionList,
+      { signal }
+    );
+
+  const getActiveGoal = (today?: string, signal?: AbortSignal) =>
+    requestJson(`/api/v1/goal${buildQuery({ today })}`, parseGoal, { signal });
+
   return {
     checkHealth: (signal) =>
       requestJson('/health', parseHealthResponse, {
@@ -227,31 +303,30 @@ export function createCarentaApiClient(options: CarentaApiClientOptions): Carent
       }),
     getAuthMe: (signal) =>
       requestJson('/api/v1/auth/me', parseAuthIdentity, { signal }),
-    getBudgetSummary: (query, signal) =>
-      requestJson(
-        `/api/v1/budget/summary${buildQuery({
-          today: query?.today,
-          days_remaining: query?.days_remaining,
-        })}`,
-        parseBudgetSummary,
-        { signal }
-      ),
+    getBudgetSummary,
+    getBudgetSummaryWithFallback: (query, signal) => {
+      const qs = buildQuery({ today: query?.today, days_remaining: query?.days_remaining });
+      return readWithFallback(`budget:summary:${qs ? qs.slice(1) : 'default'}`, () =>
+        getBudgetSummary(query, signal)
+      );
+    },
     configureBudget: (payload, signal) =>
       requestJson('/api/v1/budget/config', parseBudgetConfigResponse, {
         method: 'POST',
         body: payload,
         signal,
       }),
-    listTransactions: (query, signal) =>
-      requestJson(
-        `/api/v1/transactions${buildQuery({
-          start_date: query?.start_date,
-          end_date: query?.end_date,
-          kind: query?.kind,
-        })}`,
-        parseTransactionList,
-        { signal }
-      ),
+    listTransactions,
+    listTransactionsWithFallback: (query, signal) => {
+      const qs = buildQuery({
+        start_date: query?.start_date,
+        end_date: query?.end_date,
+        kind: query?.kind,
+      });
+      return readWithFallback(`transactions:list:${qs ? qs.slice(1) : 'default'}`, () =>
+        listTransactions(query, signal)
+      );
+    },
     createTransaction: (payload, signal) =>
       requestJson('/api/v1/transactions', parseTransaction, {
         method: 'POST',
@@ -262,8 +337,9 @@ export function createCarentaApiClient(options: CarentaApiClientOptions): Carent
       requestJson(`/api/v1/transactions/${encodeURIComponent(id)}`, parseTransaction, { signal }),
     listGoals: (today, signal) =>
       requestJson(`/api/v1/goals${buildQuery({ today })}`, parseGoalList, { signal }),
-    getActiveGoal: (today, signal) =>
-      requestJson(`/api/v1/goal${buildQuery({ today })}`, parseGoal, { signal }),
+    getActiveGoal,
+    getActiveGoalWithFallback: (today, signal) =>
+      readWithFallback(`goal:active:${today || 'default'}`, () => getActiveGoal(today, signal)),
     setActiveGoal: (payload, today, signal) =>
       requestJson(`/api/v1/goal${buildQuery({ today })}`, parseGoal, {
         method: 'POST',

@@ -207,8 +207,11 @@ export function AuthProvider({
         fetchImpl,
         getAccessToken: () => sessionRef.current?.accessToken,
         onUnauthorized: handleUnauthorized,
+        readCache,
+        getCacheUserKey: () =>
+          sessionRef.current?.user.id ?? (!isConfigured ? 'local-dev' : null),
       }),
-    [baseUrl, fetchImpl, handleUnauthorized]
+    [baseUrl, fetchImpl, handleUnauthorized, isConfigured, readCache]
   );
 
   const value = useMemo<AuthContextValue>(
