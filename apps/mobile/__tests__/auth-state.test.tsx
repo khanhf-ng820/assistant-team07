@@ -162,4 +162,54 @@ describe('AuthProvider and SignInGate', () => {
     await expect(storage.getSession()).resolves.toBeNull();
     expect(readCache.get('student-1', 'budget:summary:default')).toBeUndefined();
   });
+
+  it('refuses silent local_dev on partial Supabase config and validates empty SignInGate submit', async () => {
+    await render(
+      <AuthProvider isConfigured={false} isPartialConfig configError="Thiếu ANON_KEY" baseUrl="http://example.test">
+        <ProtectedProbe />
+      </AuthProvider>
+    );
+
+    expect(screen.getByText('Đăng nhập CARENTA')).toBeVisible();
+    expect(screen.getByText('Thiếu ANON_KEY')).toBeVisible();
+    await fireEvent.press(screen.getByRole('button', { name: 'Đăng nhập' }));
+    expect(screen.getByText('Vui lòng nhập đầy đủ email và mật khẩu.')).toBeVisible();
+  });
+
+  it('does not resurrect a signed-out session if signOut runs mid-401-refresh', async () => {
+    const validSession = makeSession();
+    const storage = createMemorySessionStorage(validSession);
+    let resolveRefresh!: (s: AuthSession) => void;
+    const refreshDeferred = new Promise<AuthSession>((resolve) => {
+      resolveRefresh = resolve;
+    });
+
+    const authGateway: AuthGateway = {
+      signInWithPassword: jest.fn(async () => validSession),
+      refreshSession: jest.fn(() => refreshDeferred),
+      signOut: jest.fn(async () => {}),
+    };
+
+    const fetchImpl = jest.fn(async () => ({
+      ok: false,
+      status: 401,
+      headers: { get: () => null },
+      json: async () => ({ error: { code: 'AUTH_TOKEN_EXPIRED', message: 'Expired', request_id: 'r1' } }),
+    })) as unknown as typeof fetch;
+
+    await render(
+      <AuthProvider isConfigured storage={storage} authGateway={authGateway} fetchImpl={fetchImpl} baseUrl="http://example.test">
+        <ProtectedProbe />
+      </AuthProvider>
+    );
+
+    expect(await screen.findByTestId('auth-status')).toHaveTextContent('authenticated');
+    await fireEvent.press(screen.getByRole('button', { name: 'Gọi API' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Đăng xuất' }));
+
+    resolveRefresh(makeSession({ accessToken: 'late-token' }));
+
+    expect(await screen.findByText('Đăng nhập CARENTA')).toBeVisible();
+    await expect(storage.getSession()).resolves.toBeNull();
+  });
 });

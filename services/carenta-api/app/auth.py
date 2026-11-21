@@ -112,7 +112,18 @@ class SupabaseTokenVerifier:
             decode_kwargs["issuer"] = issuer
 
         if alg in _ASYMMETRIC_ALGS and issuer:
-            signing_key = self._get_jwks_client().get_signing_key_from_jwt(token).key
+            try:
+                signing_key = self._get_jwks_client().get_signing_key_from_jwt(token).key
+            except jwt.PyJWKClientConnectionError as exc:
+                raise ApiHttpError(
+                    503,
+                    "AUTH_SERVICE_UNAVAILABLE",
+                    "Authentication service temporarily unavailable.",
+                ) from exc
+            except jwt.PyJWKClientError as exc:
+                raise ApiHttpError(
+                    401, "AUTH_INVALID_TOKEN", "Invalid authentication token."
+                ) from exc
             return jwt.decode(token, signing_key, algorithms=[alg], **decode_kwargs)
 
         if alg == "HS256" and self._config.jwt_secret:
@@ -129,7 +140,7 @@ class SupabaseTokenVerifier:
             raise
         except jwt.ExpiredSignatureError as exc:
             raise ApiHttpError(401, "AUTH_TOKEN_EXPIRED", "Session token expired.") from exc
-        except (jwt.PyJWTError, Exception) as exc:
+        except jwt.PyJWTError as exc:
             raise ApiHttpError(
                 401, "AUTH_INVALID_TOKEN", "Invalid authentication token."
             ) from exc

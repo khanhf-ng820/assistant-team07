@@ -1,10 +1,13 @@
 import { ApiError } from '../api/errors';
 import type { AuthGateway, AuthSession } from './types';
 
+const AUTH_TIMEOUT_MS = 10_000;
+
 export interface SupabaseAuthGatewayOptions {
   supabaseUrl: string;
   supabaseAnonKey: string;
   fetchImpl?: typeof fetch;
+  timeoutMs?: number;
 }
 
 function parseSupabaseSession(body: unknown, fallbackNowSec: number): AuthSession {
@@ -66,21 +69,24 @@ function parseSupabaseSession(body: unknown, fallbackNowSec: number): AuthSessio
   };
 }
 
-async function parseErrorMessage(response: Response): Promise<string> {
+async function parseJsonSafe(response: Response): Promise<{ ok: true; data: unknown } | { ok: false }> {
   try {
-    const body: unknown = await response.json();
-    if (body && typeof body === 'object') {
-      const rec = body as Record<string, unknown>;
-      if (typeof rec.error_description === 'string' && rec.error_description) {
-        return rec.error_description;
-      }
-      if (typeof rec.msg === 'string' && rec.msg) return rec.msg;
-      if (typeof rec.message === 'string' && rec.message) return rec.message;
-    }
+    return { ok: true, data: await response.json() };
   } catch {
-    // Ignore non-JSON auth errors.
+    return { ok: false };
   }
-  return `Authentication failed (${response.status}).`;
+}
+
+function extractAuthErrorMessage(body: unknown, status: number): string {
+  if (body && typeof body === 'object') {
+    const rec = body as Record<string, unknown>;
+    if (typeof rec.error_description === 'string' && rec.error_description) {
+      return rec.error_description;
+    }
+    if (typeof rec.msg === 'string' && rec.msg) return rec.msg;
+    if (typeof rec.message === 'string' && rec.message) return rec.message;
+  }
+  return `Authentication failed (${status}).`;
 }
 
 export function createSupabaseAuthGateway(
@@ -88,91 +94,118 @@ export function createSupabaseAuthGateway(
 ): AuthGateway {
   const fetchFn = options.fetchImpl ?? globalThis.fetch;
   const cleanUrl = options.supabaseUrl.replace(/\/+$/, '');
+  const timeoutMs = options.timeoutMs ?? AUTH_TIMEOUT_MS;
 
-  function baseHeaders(): Record<string, string> {
+  function baseHeaders(extra?: Record<string, string>): Record<string, string> {
     return {
       apikey: options.supabaseAnonKey,
       'Content-Type': 'application/json',
       Accept: 'application/json',
+      ...extra,
     };
   }
 
+  async function postAuthJson(
+    path: string,
+    payload: unknown,
+    mode: 'signin' | 'refresh'
+  ): Promise<AuthSession> {
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+
+    let response: Response;
+    try {
+      response = await fetchFn(`${cleanUrl}${path}`, {
+        method: 'POST',
+        headers: baseHeaders(),
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (timedOut) {
+        throw new ApiError({
+          code: 'TIMEOUT',
+          message: 'Authentication request timed out.',
+          retryable: true,
+          userMessage: 'Kết nối đăng nhập quá thời gian. Vui lòng thử lại.',
+        });
+      }
+      throw new ApiError({
+        code: 'NETWORK_UNAVAILABLE',
+        message: err instanceof Error ? err.message : 'Network error.',
+        retryable: true,
+        userMessage: 'Không thể kết nối dịch vụ đăng nhập. Kiểm tra mạng và thử lại.',
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    const parsed = await parseJsonSafe(response);
+    if (!response.ok) {
+      const message = extractAuthErrorMessage(parsed.ok ? parsed.data : undefined, response.status);
+      const isTransient = response.status >= 500 || response.status === 429;
+      if (mode === 'refresh') {
+        throw new ApiError({
+          code: isTransient ? 'SERVER_ERROR' : 'AUTH_TOKEN_EXPIRED',
+          message,
+          status: response.status,
+          retryable: isTransient,
+          userMessage: isTransient
+            ? 'Dịch vụ xác thực đang bận, vui lòng thử lại sau.'
+            : 'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.',
+        });
+      }
+      const isCreds = response.status === 400 || response.status === 401;
+      throw new ApiError({
+        code: isCreds ? 'AUTH_INVALID_CREDENTIALS' : isTransient ? 'SERVER_ERROR' : 'HTTP_ERROR',
+        message,
+        status: response.status,
+        retryable: isTransient,
+        userMessage: isCreds
+          ? 'Email hoặc mật khẩu chưa đúng.'
+          : isTransient
+            ? 'Dịch vụ xác thực đang bận, vui lòng thử lại sau.'
+            : message,
+      });
+    }
+
+    if (!parsed.ok) {
+      throw new ApiError({
+        code: 'UNEXPECTED_RESPONSE',
+        message: 'Invalid JSON from authentication service.',
+        status: response.status,
+        retryable: false,
+        userMessage: 'Phản hồi xác thực không hợp lệ.',
+      });
+    }
+
+    return parseSupabaseSession(parsed.data, Math.floor(Date.now() / 1000));
+  }
+
   return {
-    async signInWithPassword(email: string, password: string): Promise<AuthSession> {
-      let response: Response;
-      try {
-        response = await fetchFn(`${cleanUrl}/auth/v1/token?grant_type=password`, {
-          method: 'POST',
-          headers: baseHeaders(),
-          body: JSON.stringify({ email, password }),
-        });
-      } catch (err) {
-        throw new ApiError({
-          code: 'NETWORK_UNAVAILABLE',
-          message: err instanceof Error ? err.message : 'Network error.',
-          retryable: true,
-          userMessage: 'Không thể kết nối dịch vụ đăng nhập. Kiểm tra mạng và thử lại.',
-        });
-      }
+    signInWithPassword: (email, password) =>
+      postAuthJson('/auth/v1/token?grant_type=password', { email, password }, 'signin'),
 
-      if (!response.ok) {
-        const message = await parseErrorMessage(response);
-        throw new ApiError({
-          code: response.status === 400 || response.status === 401 ? 'AUTH_INVALID_CREDENTIALS' : 'HTTP_ERROR',
-          message,
-          status: response.status,
-          retryable: response.status >= 500,
-          userMessage:
-            response.status === 400 || response.status === 401
-              ? 'Email hoặc mật khẩu chưa đúng.'
-              : message,
-        });
-      }
-
-      return parseSupabaseSession(await response.json(), Math.floor(Date.now() / 1000));
-    },
-
-    async refreshSession(refreshToken: string): Promise<AuthSession> {
-      let response: Response;
-      try {
-        response = await fetchFn(`${cleanUrl}/auth/v1/token?grant_type=refresh_token`, {
-          method: 'POST',
-          headers: baseHeaders(),
-          body: JSON.stringify({ refresh_token: refreshToken }),
-        });
-      } catch (err) {
-        throw new ApiError({
-          code: 'NETWORK_UNAVAILABLE',
-          message: err instanceof Error ? err.message : 'Network error.',
-          retryable: true,
-        });
-      }
-
-      if (!response.ok) {
-        const message = await parseErrorMessage(response);
-        throw new ApiError({
-          code: 'AUTH_TOKEN_EXPIRED',
-          message,
-          status: response.status,
-          retryable: response.status >= 500,
-          userMessage: 'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.',
-        });
-      }
-
-      return parseSupabaseSession(await response.json(), Math.floor(Date.now() / 1000));
-    },
+    refreshSession: (refreshToken) =>
+      postAuthJson('/auth/v1/token?grant_type=refresh_token', { refresh_token: refreshToken }, 'refresh'),
 
     async signOut(accessToken: string): Promise<void> {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
         await fetchFn(`${cleanUrl}/auth/v1/logout`, {
           method: 'POST',
-          headers: {
-            ...baseHeaders(),
-            Authorization: `Bearer ${accessToken}`,
-          },
+          headers: baseHeaders({ Authorization: `Bearer ${accessToken}` }),
+          signal: controller.signal,
         });
       } catch {
         // Local cleanup proceeds even when logout network call fails.
+      } finally {
+        clearTimeout(timer);
       }
     },
   };

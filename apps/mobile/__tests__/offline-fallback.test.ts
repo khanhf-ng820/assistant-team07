@@ -121,6 +121,23 @@ describe('User-scoped read-only Offline Fallback', () => {
     await expect(client.getBudgetSummaryWithFallback()).rejects.toMatchObject({
       code: 'NETWORK_UNAVAILABLE',
     });
+
+    // In-flight GET resolving after signOut must not repopulate readCache for the prior user
+    let resolveLate!: (res: Response) => void;
+    const raceClient = createCarentaApiClient({
+      baseUrl: 'http://192.168.1.10:8000',
+      readCache,
+      getCacheUserKey: () => currentUser,
+      fetchImpl: (() => new Promise<Response>((resolve) => {
+        resolveLate = resolve;
+      })) as unknown as typeof fetch,
+    });
+    const pendingFetch = raceClient.getBudgetSummaryWithFallback();
+    currentUser = null;
+    readCache.clearAll();
+    resolveLate(jsonResponse(sampleSummary));
+    await pendingFetch;
+    expect(readCache.get('user-a', 'budget:summary:default')).toBeUndefined();
   });
 
   it('falls back on TIMEOUT, never falls back on 401/422, and never queues writes offline', async () => {

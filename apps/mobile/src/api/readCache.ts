@@ -6,7 +6,6 @@ export interface CacheEntry<T> {
 export interface ReadCache {
   get: <T>(userKey: string, cacheKey: string) => CacheEntry<T> | undefined;
   set: <T>(userKey: string, cacheKey: string, data: T) => CacheEntry<T>;
-  clearUser: (userKey: string) => void;
   clearAll: () => void;
 }
 
@@ -26,9 +25,6 @@ export function createUserScopedReadCache(now: () => number = () => Date.now()):
       const entry: CacheEntry<T> = { data, cachedAt: now() };
       userBucket.set(cacheKey, entry);
       return entry;
-    },
-    clearUser(userKey: string): void {
-      entries.delete(userKey);
     },
     clearAll(): void {
       entries.clear();

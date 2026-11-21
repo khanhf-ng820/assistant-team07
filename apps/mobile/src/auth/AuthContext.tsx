@@ -14,7 +14,9 @@ import { type ReadCache, createUserScopedReadCache } from '../api/readCache';
 import {
   apiBaseUrl as defaultApiBaseUrl,
   isSupabaseAuthConfigured as defaultIsConfigured,
+  isSupabasePartialConfig as defaultIsPartialConfig,
   supabaseAnonKey as defaultAnonKey,
+  supabaseConfigError as defaultConfigError,
   supabaseUrl as defaultSupabaseUrl,
 } from '../config';
 import { createSecureSessionStorage } from './storage';
@@ -36,6 +38,8 @@ export interface AuthContextValue {
 export interface AuthProviderProps extends PropsWithChildren {
   baseUrl?: string;
   isConfigured?: boolean;
+  isPartialConfig?: boolean;
+  configError?: string | null;
   storage?: SessionStorage;
   authGateway?: AuthGateway;
   fetchImpl?: typeof fetch;
@@ -48,6 +52,8 @@ export function AuthProvider({
   children,
   baseUrl = defaultApiBaseUrl,
   isConfigured = defaultIsConfigured,
+  isPartialConfig = defaultIsPartialConfig,
+  configError = defaultConfigError,
   storage: injectedStorage,
   authGateway: injectedGateway,
   fetchImpl,
@@ -71,14 +77,20 @@ export function AuthProvider({
     });
   }, [injectedGateway, isConfigured, fetchImpl]);
 
-  const [status, setStatus] = useState<AuthStatus>(() =>
-    isConfigured ? 'restoring' : 'local_dev'
-  );
+  const initialStatus: AuthStatus = isPartialConfig
+    ? 'signed_out'
+    : isConfigured
+      ? 'restoring'
+      : 'local_dev';
+
+  const [status, setStatus] = useState<AuthStatus>(initialStatus);
   const [session, setSession] = useState<AuthSession | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(() =>
+    isPartialConfig ? (configError ?? 'Cấu hình Supabase chưa đầy đủ.') : null
+  );
 
   const sessionRef = useRef<AuthSession | null>(null);
-  const inflightRefresh = useRef<Promise<string | null> | null>(null);
+  const authEpochRef = useRef(0);
 
   const commitSession = useCallback((nextSession: AuthSession | null, nextStatus: AuthStatus) => {
     sessionRef.current = nextSession;
@@ -87,8 +99,9 @@ export function AuthProvider({
   }, []);
 
   const signOut = useCallback(async () => {
+    authEpochRef.current += 1;
     const previousToken = sessionRef.current?.accessToken;
-    commitSession(null, isConfigured ? 'signed_out' : 'local_dev');
+    commitSession(null, isConfigured || isPartialConfig ? 'signed_out' : 'local_dev');
     setError(null);
     readCache.clearAll();
     try {
@@ -99,19 +112,27 @@ export function AuthProvider({
     if (previousToken && authGateway) {
       await authGateway.signOut(previousToken);
     }
-  }, [authGateway, commitSession, isConfigured, readCache, storage]);
+  }, [authGateway, commitSession, isConfigured, isPartialConfig, readCache, storage]);
 
   useEffect(() => {
+    if (isPartialConfig) {
+      commitSession(null, 'signed_out');
+      setError(configError ?? 'Cấu hình Supabase chưa đầy đủ.');
+      return;
+    }
+
     if (!isConfigured) {
       commitSession(null, 'local_dev');
       return;
     }
 
     let cancelled = false;
+    const epochAtStart = authEpochRef.current;
+
     async function restore() {
       try {
         const stored = await storage.getSession();
-        if (cancelled) return;
+        if (cancelled || epochAtStart !== authEpochRef.current) return;
         if (!stored) {
           commitSession(null, 'signed_out');
           return;
@@ -125,22 +146,35 @@ export function AuthProvider({
 
         if (!authGateway) {
           await storage.clearSession();
-          if (!cancelled) commitSession(null, 'signed_out');
+          if (!cancelled && epochAtStart === authEpochRef.current) {
+            commitSession(null, 'signed_out');
+          }
           return;
         }
 
         const refreshed = await authGateway.refreshSession(stored.refreshToken);
-        if (cancelled) return;
+        if (cancelled || epochAtStart !== authEpochRef.current) return;
         await storage.setSession(refreshed);
-        if (!cancelled) commitSession(refreshed, 'authenticated');
-      } catch {
+        if (!cancelled && epochAtStart === authEpochRef.current) {
+          commitSession(refreshed, 'authenticated');
+        }
+      } catch (err) {
+        if (cancelled || epochAtStart !== authEpochRef.current) return;
+        const isTransient = err instanceof ApiError && err.retryable;
+        if (isTransient) {
+          setError(err.userMessage);
+          commitSession(null, 'signed_out');
+          return;
+        }
         readCache.clearAll();
         try {
           await storage.clearSession();
         } catch {
           // Ignore storage wipe errors.
         }
-        if (!cancelled) commitSession(null, 'signed_out');
+        if (!cancelled && epochAtStart === authEpochRef.current) {
+          commitSession(null, 'signed_out');
+        }
       }
     }
 
@@ -148,22 +182,31 @@ export function AuthProvider({
     return () => {
       cancelled = true;
     };
-  }, [authGateway, commitSession, isConfigured, readCache, storage]);
+  }, [authGateway, commitSession, configError, isConfigured, isPartialConfig, readCache, storage]);
 
   const signIn = useCallback(
     async (email: string, password: string) => {
+      if (isPartialConfig) {
+        setError(configError ?? 'Cấu hình Supabase chưa đầy đủ.');
+        return;
+      }
       if (!authGateway) {
         setError('Supabase Auth chưa được cấu hình.');
         return;
       }
       setError(null);
+      const epochAtStart = authEpochRef.current;
       try {
         const nextSession = await authGateway.signInWithPassword(email.trim(), password);
+        if (epochAtStart !== authEpochRef.current) {
+          return;
+        }
         const previousId = sessionRef.current?.user.id;
         if (previousId && previousId !== nextSession.user.id) {
           readCache.clearAll();
         }
         await storage.setSession(nextSession);
+        authEpochRef.current += 1;
         commitSession(nextSession, 'authenticated');
       } catch (err) {
         const msg =
@@ -174,7 +217,7 @@ export function AuthProvider({
         throw err;
       }
     },
-    [authGateway, commitSession, readCache, storage]
+    [authGateway, commitSession, configError, isPartialConfig, readCache, storage]
   );
 
   const handleUnauthorized = useCallback(async (): Promise<string | null> => {
@@ -182,22 +225,24 @@ export function AuthProvider({
     if (!isConfigured || !authGateway || !active) {
       return null;
     }
-    if (!inflightRefresh.current) {
-      inflightRefresh.current = (async () => {
-        try {
-          const refreshed = await authGateway.refreshSession(active.refreshToken);
-          await storage.setSession(refreshed);
-          commitSession(refreshed, 'authenticated');
-          return refreshed.accessToken;
-        } catch {
-          await signOut();
-          return null;
-        } finally {
-          inflightRefresh.current = null;
-        }
-      })();
+    const epochAtStart = authEpochRef.current;
+    try {
+      const refreshed = await authGateway.refreshSession(active.refreshToken);
+      if (epochAtStart !== authEpochRef.current) {
+        return null;
+      }
+      await storage.setSession(refreshed);
+      if (epochAtStart !== authEpochRef.current) {
+        return null;
+      }
+      commitSession(refreshed, 'authenticated');
+      return refreshed.accessToken;
+    } catch {
+      if (epochAtStart === authEpochRef.current) {
+        await signOut();
+      }
+      return null;
     }
-    return inflightRefresh.current;
   }, [authGateway, commitSession, isConfigured, signOut, storage]);
 
   const apiClient = useMemo(
@@ -209,9 +254,9 @@ export function AuthProvider({
         onUnauthorized: handleUnauthorized,
         readCache,
         getCacheUserKey: () =>
-          sessionRef.current?.user.id ?? (!isConfigured ? 'local-dev' : null),
+          sessionRef.current?.user.id ?? (!isConfigured && !isPartialConfig ? 'local-dev' : null),
       }),
-    [baseUrl, fetchImpl, handleUnauthorized, isConfigured, readCache]
+    [baseUrl, fetchImpl, handleUnauthorized, isConfigured, isPartialConfig, readCache]
   );
 
   const value = useMemo<AuthContextValue>(

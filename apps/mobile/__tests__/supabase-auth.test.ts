@@ -97,4 +97,34 @@ describe('createSupabaseAuthGateway', () => {
 
     await expect(gateway.signOut('access-new')).resolves.toBeUndefined();
   });
+
+  it('aborts hung auth requests on timeout and maps transient 5xx refreshes as retryable', async () => {
+    jest.useFakeTimers();
+    const slowGateway = createSupabaseAuthGateway({
+      ...baseOptions,
+      timeoutMs: 500,
+      fetchImpl: ((_url: RequestInfo | URL, init?: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new Error('Aborted')), { once: true });
+        })) as unknown as typeof fetch,
+    });
+
+    const pending = slowGateway.refreshSession('refresh-1');
+    jest.advanceTimersByTime(500);
+    await expect(pending).rejects.toMatchObject({
+      code: 'TIMEOUT',
+      retryable: true,
+    });
+    jest.useRealTimers();
+
+    const transientGateway = createSupabaseAuthGateway({
+      ...baseOptions,
+      fetchImpl: (async () => jsonResponse({ msg: 'Supabase down' }, 503)) as unknown as typeof fetch,
+    });
+    await expect(transientGateway.refreshSession('refresh-1')).rejects.toMatchObject({
+      code: 'SERVER_ERROR',
+      status: 503,
+      retryable: true,
+    });
+  });
 });

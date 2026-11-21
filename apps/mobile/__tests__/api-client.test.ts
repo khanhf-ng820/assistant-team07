@@ -91,6 +91,7 @@ describe('CARENTA SDK API client', () => {
         return jsonResponse(sampleTransaction);
       }
       if (target.includes('/api/v1/goals')) {
+        if (init?.method === 'POST') return jsonResponse(sampleGoal, 201);
         return jsonResponse([sampleGoal]);
       }
       if (target.includes('/api/v1/goal')) {
@@ -122,6 +123,9 @@ describe('CARENTA SDK API client', () => {
     })).resolves.toEqual(sampleTransaction);
     await expect(client.getTransaction('tx-1')).resolves.toEqual(sampleTransaction);
     await expect(client.listGoals()).resolves.toEqual([sampleGoal]);
+    await expect(client.createGoal({
+      title: 'Laptop moi', target_amount: 2000000, deadline: '2026-12-21', initial_allocated: 1250000,
+    })).resolves.toEqual(sampleGoal);
     await expect(client.getActiveGoal()).resolves.toEqual(sampleGoal);
     await expect(client.setActiveGoal({
       title: 'Laptop moi', target_amount: 2000000, deadline: '2026-12-21', initial_allocated: 1250000,
@@ -163,18 +167,20 @@ describe('CARENTA SDK API client', () => {
     await expect(client.getAuthMe()).rejects.toMatchObject({
       name: 'ApiError',
       code: 'AUTH_TOKEN_EXPIRED',
+      message: 'Session expired',
       status: 401,
       requestId: 'srv-1',
       retryable: false,
-      userMessage: 'Session expired',
+      userMessage: 'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.',
     });
 
     await expect(client.getTransaction('missing')).rejects.toMatchObject({
       code: 'NOT_FOUND',
+      message: 'Transaction not found',
       status: 404,
       requestId: 'srv-2',
       retryable: false,
-      userMessage: 'Transaction not found',
+      userMessage: 'Không tìm thấy dữ liệu yêu cầu.',
     });
 
     await expect(client.createTransaction({
@@ -183,6 +189,7 @@ describe('CARENTA SDK API client', () => {
       code: 'VALIDATION_ERROR',
       status: 422,
       retryable: false,
+      userMessage: 'Dữ liệu không hợp lệ (amount). Vui lòng kiểm tra lại.',
     });
   });
 

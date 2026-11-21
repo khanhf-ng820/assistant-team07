@@ -7,6 +7,7 @@ export type ApiErrorCode =
   | 'AUTH_REQUIRED'
   | 'AUTH_TOKEN_EXPIRED'
   | 'AUTH_INVALID_TOKEN'
+  | 'AUTH_SERVICE_UNAVAILABLE'
   | 'FORBIDDEN'
   | 'NOT_FOUND'
   | 'BAD_REQUEST'
@@ -44,6 +45,21 @@ export class ApiError extends Error {
   }
 }
 
+const VIETNAMESE_CODE_MESSAGES: Record<string, string> = {
+  AUTH_REQUIRED: 'Vui lòng đăng nhập để tiếp tục.',
+  AUTH_TOKEN_EXPIRED: 'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.',
+  AUTH_INVALID_TOKEN: 'Phiên đăng nhập không hợp lệ, vui lòng đăng nhập lại.',
+  AUTH_SERVICE_UNAVAILABLE: 'Dịch vụ xác thực tạm thời gián đoạn, vui lòng thử lại.',
+  FORBIDDEN: 'Bạn không có quyền thực hiện thao tác này.',
+  NOT_FOUND: 'Không tìm thấy dữ liệu yêu cầu.',
+  BAD_REQUEST: 'Yêu cầu không hợp lệ.',
+  CONFLICT: 'Dữ liệu xung đột với trạng thái hiện tại.',
+  VALIDATION_ERROR: 'Dữ liệu nhập chưa hợp lệ, vui lòng kiểm tra lại.',
+  RATE_LIMITED: 'Bạn thao tác quá nhanh, vui lòng thử lại sau ít phút.',
+  INTERNAL_ERROR: 'Máy chủ đang gặp sự cố, vui lòng thử lại sau.',
+  SERVER_ERROR: 'Máy chủ đang bận, vui lòng thử lại sau.',
+};
+
 function defaultCodeForStatus(status: number): ApiErrorCode {
   if (status === 400) return 'BAD_REQUEST';
   if (status === 401) return 'AUTH_REQUIRED';
@@ -52,19 +68,44 @@ function defaultCodeForStatus(status: number): ApiErrorCode {
   if (status === 409) return 'CONFLICT';
   if (status === 422) return 'VALIDATION_ERROR';
   if (status === 429) return 'RATE_LIMITED';
+  if (status === 503) return 'SERVER_ERROR';
   if (status >= 500) return 'SERVER_ERROR';
   return 'HTTP_ERROR';
 }
 
-function formatFastApiValidationDetail(items: unknown[]): string {
-  const first = items[0];
-  if (first && typeof first === 'object' && 'msg' in first && typeof first.msg === 'string') {
-    const loc = 'loc' in first && Array.isArray(first.loc)
-      ? first.loc.filter((part) => part !== 'body').join('.')
-      : '';
-    return loc ? `${loc}: ${first.msg}` : first.msg;
+function localizedUserMessage(code: string, status: number, fields?: string): string {
+  if (code === 'VALIDATION_ERROR' && fields) {
+    return `Dữ liệu không hợp lệ (${fields}). Vui lòng kiểm tra lại.`;
   }
-  return 'Dữ liệu gửi lên không hợp lệ.';
+  return (
+    VIETNAMESE_CODE_MESSAGES[code] ??
+    (status >= 500 || status === 429
+      ? 'Máy chủ đang bận, vui lòng thử lại sau.'
+      : 'Không thể hoàn tất yêu cầu.')
+  );
+}
+
+function parseValidationDetails(items: unknown[]): { message: string; fields?: string } {
+  const fieldsList = items
+    .map((item) => {
+      if (!item || typeof item !== 'object') return '';
+      const loc = 'loc' in item && Array.isArray(item.loc)
+        ? item.loc.filter((part) => part !== 'body').join('.')
+        : '';
+      return loc;
+    })
+    .filter(Boolean);
+
+  const first = items[0];
+  let message = 'Request validation failed';
+  if (first && typeof first === 'object' && 'msg' in first && typeof first.msg === 'string') {
+    const firstField = fieldsList[0] ?? '';
+    message = firstField ? `${firstField}: ${first.msg}` : first.msg;
+  }
+  return {
+    message,
+    fields: fieldsList.length > 0 ? fieldsList.slice(0, 3).join(', ') : undefined,
+  };
 }
 
 export function normalizeHttpError(
@@ -93,44 +134,45 @@ export function normalizeHttpError(
         status,
         requestId,
         retryable,
-        userMessage: message,
+        userMessage: localizedUserMessage(code, status),
       });
     }
 
     if ('detail' in body) {
       const detail = (body as { detail: unknown }).detail;
       if (typeof detail === 'string' && detail) {
+        const code = defaultCodeForStatus(status);
         return new ApiError({
-          code: defaultCodeForStatus(status),
+          code,
           message: detail,
           status,
           requestId: headerRequestId,
           retryable,
-          userMessage: detail,
+          userMessage: localizedUserMessage(code, status),
         });
       }
       if (Array.isArray(detail)) {
-        const message = formatFastApiValidationDetail(detail);
+        const parsed = parseValidationDetails(detail);
+        const code = status === 422 ? 'VALIDATION_ERROR' : defaultCodeForStatus(status);
         return new ApiError({
-          code: status === 422 ? 'VALIDATION_ERROR' : defaultCodeForStatus(status),
-          message,
+          code,
+          message: parsed.message,
           status,
           requestId: headerRequestId,
           retryable,
-          userMessage: message,
+          userMessage: localizedUserMessage(code, status, parsed.fields),
         });
       }
     }
   }
 
+  const code = defaultCodeForStatus(status);
   return new ApiError({
-    code: defaultCodeForStatus(status),
+    code,
     message: `Request failed (${status})`,
     status,
     requestId: headerRequestId,
     retryable,
-    userMessage: retryable
-      ? 'Máy chủ đang bận, vui lòng thử lại sau.'
-      : 'Không thể hoàn tất yêu cầu.',
+    userMessage: localizedUserMessage(code, status),
   });
 }

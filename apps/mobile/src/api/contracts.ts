@@ -140,10 +140,10 @@ function asNullableString(
   return val;
 }
 
-function asIntVnd(obj: Record<string, unknown>, field: string, label: string): number {
+function asSafeInteger(obj: Record<string, unknown>, field: string, label: string): number {
   const val = obj[field];
   if (typeof val !== 'number' || !Number.isSafeInteger(val)) {
-    unexpected(`Expected integer VND for ${label}.${field}`);
+    unexpected(`Expected integer value for ${label}.${field}`);
   }
   return val;
 }
@@ -186,7 +186,7 @@ export function parseTransaction(body: unknown): TransactionResponse {
   }
   return {
     id: asString(obj, 'id', 'TransactionResponse'),
-    amount: asIntVnd(obj, 'amount', 'TransactionResponse'),
+    amount: asSafeInteger(obj, 'amount', 'TransactionResponse'),
     kind,
     category: asString(obj, 'category', 'TransactionResponse'),
     date: asString(obj, 'date', 'TransactionResponse'),
@@ -202,9 +202,9 @@ export function parseTransactionList(body: unknown): TransactionListResponse {
   }
   return {
     items: obj.items.map(parseTransaction),
-    total: asIntVnd(obj, 'total', 'TransactionListResponse'),
-    total_income: asIntVnd(obj, 'total_income', 'TransactionListResponse'),
-    total_expense: asIntVnd(obj, 'total_expense', 'TransactionListResponse'),
+    total: asSafeInteger(obj, 'total', 'TransactionListResponse'),
+    total_income: asSafeInteger(obj, 'total_income', 'TransactionListResponse'),
+    total_expense: asSafeInteger(obj, 'total_expense', 'TransactionListResponse'),
   };
 }
 
@@ -213,12 +213,12 @@ export function parseGoal(body: unknown): GoalResponse {
   return {
     id: asString(obj, 'id', 'GoalResponse'),
     title: asString(obj, 'title', 'GoalResponse'),
-    target_amount: asIntVnd(obj, 'target_amount', 'GoalResponse'),
+    target_amount: asSafeInteger(obj, 'target_amount', 'GoalResponse'),
     deadline: asString(obj, 'deadline', 'GoalResponse'),
-    allocated_amount: asIntVnd(obj, 'allocated_amount', 'GoalResponse'),
-    remaining_target: asIntVnd(obj, 'remaining_target', 'GoalResponse'),
-    saving_days: asIntVnd(obj, 'saving_days', 'GoalResponse'),
-    suggested_daily_saving: asIntVnd(obj, 'suggested_daily_saving', 'GoalResponse'),
+    allocated_amount: asSafeInteger(obj, 'allocated_amount', 'GoalResponse'),
+    remaining_target: asSafeInteger(obj, 'remaining_target', 'GoalResponse'),
+    saving_days: asSafeInteger(obj, 'saving_days', 'GoalResponse'),
+    suggested_daily_saving: asSafeInteger(obj, 'suggested_daily_saving', 'GoalResponse'),
     is_completed: asBoolean(obj, 'is_completed', 'GoalResponse'),
     created_at: asString(obj, 'created_at', 'GoalResponse'),
   };
@@ -234,22 +234,22 @@ export function parseGoalList(body: unknown): GoalResponse[] {
 export function parseBudgetSummary(body: unknown): BudgetSummaryResponse {
   const obj = asRecord(body, 'BudgetSummaryResponse');
   return {
-    cash: asIntVnd(obj, 'cash', 'BudgetSummaryResponse'),
-    total_income: asIntVnd(obj, 'total_income', 'BudgetSummaryResponse'),
-    total_expense: asIntVnd(obj, 'total_expense', 'BudgetSummaryResponse'),
-    unpaid_commitments: asIntVnd(obj, 'unpaid_commitments', 'BudgetSummaryResponse'),
-    savings_allocated: asIntVnd(obj, 'savings_allocated', 'BudgetSummaryResponse'),
-    savings_reserved: asIntVnd(obj, 'savings_reserved', 'BudgetSummaryResponse'),
-    protected: asIntVnd(obj, 'protected', 'BudgetSummaryResponse'),
-    safe_to_spend: asIntVnd(obj, 'safe_to_spend', 'BudgetSummaryResponse'),
-    funding_shortfall: asIntVnd(obj, 'funding_shortfall', 'BudgetSummaryResponse'),
-    days_remaining: asIntVnd(obj, 'days_remaining', 'BudgetSummaryResponse'),
-    daily_budget: asIntVnd(obj, 'daily_budget', 'BudgetSummaryResponse'),
-    spent_today: asIntVnd(obj, 'spent_today', 'BudgetSummaryResponse'),
-    remaining_today: asIntVnd(obj, 'remaining_today', 'BudgetSummaryResponse'),
+    cash: asSafeInteger(obj, 'cash', 'BudgetSummaryResponse'),
+    total_income: asSafeInteger(obj, 'total_income', 'BudgetSummaryResponse'),
+    total_expense: asSafeInteger(obj, 'total_expense', 'BudgetSummaryResponse'),
+    unpaid_commitments: asSafeInteger(obj, 'unpaid_commitments', 'BudgetSummaryResponse'),
+    savings_allocated: asSafeInteger(obj, 'savings_allocated', 'BudgetSummaryResponse'),
+    savings_reserved: asSafeInteger(obj, 'savings_reserved', 'BudgetSummaryResponse'),
+    protected: asSafeInteger(obj, 'protected', 'BudgetSummaryResponse'),
+    safe_to_spend: asSafeInteger(obj, 'safe_to_spend', 'BudgetSummaryResponse'),
+    funding_shortfall: asSafeInteger(obj, 'funding_shortfall', 'BudgetSummaryResponse'),
+    days_remaining: asSafeInteger(obj, 'days_remaining', 'BudgetSummaryResponse'),
+    daily_budget: asSafeInteger(obj, 'daily_budget', 'BudgetSummaryResponse'),
+    spent_today: asSafeInteger(obj, 'spent_today', 'BudgetSummaryResponse'),
+    remaining_today: asSafeInteger(obj, 'remaining_today', 'BudgetSummaryResponse'),
     is_overspent_today: asBoolean(obj, 'is_overspent_today', 'BudgetSummaryResponse'),
-    overspent_amount_today: asIntVnd(obj, 'overspent_amount_today', 'BudgetSummaryResponse'),
-    subsequent_daily_budget: asIntVnd(obj, 'subsequent_daily_budget', 'BudgetSummaryResponse'),
+    overspent_amount_today: asSafeInteger(obj, 'overspent_amount_today', 'BudgetSummaryResponse'),
+    subsequent_daily_budget: asSafeInteger(obj, 'subsequent_daily_budget', 'BudgetSummaryResponse'),
     is_period_exhausted: asBoolean(obj, 'is_period_exhausted', 'BudgetSummaryResponse'),
     engine: asString(obj, 'engine', 'BudgetSummaryResponse'),
   };

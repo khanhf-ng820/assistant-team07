@@ -61,6 +61,7 @@ export interface CarentaApiClient {
   createTransaction: (payload: TransactionCreate, signal?: AbortSignal) => Promise<TransactionResponse>;
   getTransaction: (id: string, signal?: AbortSignal) => Promise<TransactionResponse>;
   listGoals: (today?: string, signal?: AbortSignal) => Promise<GoalResponse[]>;
+  createGoal: (payload: GoalCreate, today?: string, signal?: AbortSignal) => Promise<GoalResponse>;
   getActiveGoal: (today?: string, signal?: AbortSignal) => Promise<GoalResponse>;
   getActiveGoalWithFallback: (
     today?: string,
@@ -205,12 +206,26 @@ export function createCarentaApiClient(options: CarentaApiClientOptions): Carent
       }
     }
 
-    let response = await sendOnce();
+    const sentToken = authenticated ? options.getAccessToken?.() : undefined;
+    let response = await sendOnce(sentToken ?? undefined);
     if (response.status === 401 && allowRetry && options.onUnauthorized) {
-      const refreshPromise = triggerSingleFlightRefresh();
-      const refreshedToken = refreshPromise ? await refreshPromise : null;
-      if (refreshedToken) {
-        response = await sendOnce(refreshedToken);
+      const latestToken = options.getAccessToken?.();
+      let retryToken: string | null = null;
+      if (latestToken && latestToken !== sentToken && !pendingRefresh) {
+        retryToken = latestToken;
+      } else {
+        const refreshPromise = triggerSingleFlightRefresh();
+        retryToken = refreshPromise ? await refreshPromise : null;
+      }
+      if (config.signal?.aborted) {
+        throw new ApiError({
+          code: 'ABORTED',
+          message: 'Request cancelled.',
+          retryable: false,
+        });
+      }
+      if (retryToken) {
+        response = await sendOnce(retryToken);
       }
     }
 
@@ -246,7 +261,8 @@ export function createCarentaApiClient(options: CarentaApiClientOptions): Carent
     const userKey = options.getCacheUserKey?.() ?? null;
     try {
       const data = await fetcher();
-      if (options.readCache && userKey) {
+      const activeUserKey = options.getCacheUserKey?.() ?? null;
+      if (options.readCache && userKey && activeUserKey === userKey) {
         options.readCache.set(userKey, cacheKey, data);
       }
       return { data, fromCache: false };
@@ -337,6 +353,12 @@ export function createCarentaApiClient(options: CarentaApiClientOptions): Carent
       requestJson(`/api/v1/transactions/${encodeURIComponent(id)}`, parseTransaction, { signal }),
     listGoals: (today, signal) =>
       requestJson(`/api/v1/goals${buildQuery({ today })}`, parseGoalList, { signal }),
+    createGoal: (payload, today, signal) =>
+      requestJson(`/api/v1/goals${buildQuery({ today })}`, parseGoal, {
+        method: 'POST',
+        body: payload,
+        signal,
+      }),
     getActiveGoal,
     getActiveGoalWithFallback: (today, signal) =>
       readWithFallback(`goal:active:${today || 'default'}`, () => getActiveGoal(today, signal)),

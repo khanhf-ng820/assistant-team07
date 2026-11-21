@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import httpx
 import jwt
 from cryptography.hazmat.primitives.asymmetric import ec
+from pydantic import BaseModel, Field
 
 from app.auth import AuthConfig, SupabaseTokenVerifier, load_auth_config
 from app.main import create_app
@@ -203,3 +204,63 @@ def test_unsafe_request_id_is_replaced_with_fresh_generated_id():
     generated = res.headers["x-request-id"]
     assert generated != "bad id with spaces / <script>"
     assert len(generated) == 12
+
+
+def test_jwks_connection_outage_returns_503_instead_of_401():
+    class _OutageJwkClient:
+        def get_signing_key_from_jwt(self, _token: str):
+            raise jwt.PyJWKClientConnectionError("Connection refused")
+
+    private_key, _ = _generate_es256_pair()
+    token = jwt.encode(
+        _make_claims(),
+        private_key,
+        algorithm="ES256",
+        headers={"kid": "kid-es256-1"},
+    )
+    config = AuthConfig(supabase_url="https://proj.supabase.co")
+    verifier = SupabaseTokenVerifier(config=config, jwks_client=_OutageJwkClient())
+    app = create_app(auth_config=config, token_verifier=verifier)
+
+    res = _request(app, "GET", "/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert res.status_code == 503
+    assert res.json()["error"]["code"] == "AUTH_SERVICE_UNAVAILABLE"
+
+
+class _ValidationItem(BaseModel):
+    amount: int = Field(gt=0)
+
+
+def test_validation_422_and_unhandled_500_use_safe_structured_envelopes():
+    app = create_app()
+
+    @app.post("/test-validate")
+    def _validate(payload: _ValidationItem):
+        return payload
+
+    @app.get("/test-boom")
+    def _boom():
+        raise RuntimeError("secret-db-password-must-not-leak")
+
+    async def run_cases():
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            bad_res = await client.post("/test-validate", json={"amount": -5})
+            boom_res = await client.get("/test-boom", headers={"X-Request-ID": "req-500"})
+            return bad_res, boom_res
+
+    bad_res, boom_res = asyncio.run(run_cases())
+    assert bad_res.status_code == 422
+    assert bad_res.json()["error"]["code"] == "VALIDATION_ERROR"
+    assert "amount" in bad_res.json()["error"]["message"]
+    assert "-5" not in bad_res.json()["error"]["message"]
+
+    assert boom_res.status_code == 500
+    assert boom_res.json() == {
+        "error": {
+            "code": "INTERNAL_ERROR",
+            "message": "An unexpected server error occurred.",
+            "request_id": "req-500",
+        }
+    }
+    assert "secret-db-password" not in boom_res.text

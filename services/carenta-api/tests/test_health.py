@@ -28,9 +28,9 @@ def test_health_echoes_safe_incoming_request_id():
     assert response.headers["x-request-id"] == "req-mobile-123"
 
 
-def test_openapi_describes_health():
+def test_openapi_describes_expected_routes():
     schema = get("/openapi.json", create_app()).json()
-    assert "/health" in schema["paths"]
+    assert set(schema["paths"]) == {"/health", "/api/v1/auth/me", "/v1/auth/me"}
     response_schema = schema["paths"]["/health"]["get"]["responses"]["200"]
     assert response_schema["content"]["application/json"]["schema"]["$ref"].endswith(
         "/HealthResponse"
