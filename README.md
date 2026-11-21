@@ -55,7 +55,7 @@ Use the real address, not `localhost`, `127.0.0.1`, or `0.0.0.0`. Values prefixe
 
 ### Interactive setup wizard
 
-Run the guided environment wizard from the repository root to populate local LAN and Supabase settings safely without manual copy-paste errors:
+Run the guided environment wizard [`scripts/setup-carenta-env.sh`](scripts/setup-carenta-env.sh) from the repository root to populate local LAN and optional Supabase settings safely:
 
 ```bash
 ./scripts/setup-carenta-env.sh

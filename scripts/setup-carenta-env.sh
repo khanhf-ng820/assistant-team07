@@ -207,26 +207,38 @@ banner "CARENTA LAN & Supabase Environment Setup"
 # ── Stage 1: Mobile LAN API URL ───────────────────────────────────────────
 stage "Mobile: LAN Backend URL"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LOCAL_IP=$(ipconfig getifaddr en0 2>/dev/null || true)
-ENV_FILE="$REPO_ROOT/apps/mobile/.env"
+LOCAL_IP=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || true)
+MOBILE_ENV="$REPO_ROOT/apps/mobile/.env"
+API_ENV="$REPO_ROOT/services/carenta-api/.env"
+ENV_FILE="$MOBILE_ENV"
 say "Configure the local FastAPI URL bundled into the Expo Go app."
 if [[ -n "$LOCAL_IP" ]]; then
-  note "Detected Wi-Fi IPv4 on en0: http://${LOCAL_IP}:8000"
+  note "Detected LAN IPv4 hint: http://${LOCAL_IP}:8000"
 else
   note "Use your computer's LAN IPv4 address (not localhost or 127.0.0.1 for phones)."
 fi
-ask EXPO_PUBLIC_API_URL "Enter FastAPI base URL (e.g. http://${LOCAL_IP:-192.168.1.10}:8000):"
+while true; do
+  ask EXPO_PUBLIC_API_URL "Enter FastAPI base URL (e.g. http://${LOCAL_IP:-192.168.1.10}:8000):"
+  if [[ "$EXPO_PUBLIC_API_URL" =~ ^https?://[^[:space:]]+$ ]]; then
+    break
+  fi
+  warn "Please enter a valid http:// or https:// URL."
+done
 write_env EXPO_PUBLIC_API_URL "$EXPO_PUBLIC_API_URL"
 
 # ── Stage 2: Auth Mode Selection ──────────────────────────────────────────
 stage "Auth Mode Selection"
-say "Choose between full Supabase Auth or unauthenticated Local Dev Mode over LAN."
+say "Choose between Supabase Auth or unauthenticated Local Dev Mode over LAN."
 if ! confirm "Do you have a Supabase project ready to configure?"; then
-  ENV_FILE="$REPO_ROOT/services/carenta-api/.env"
+  ENV_FILE="$API_ENV"
+  # Clear stale Supabase settings so Local Dev Mode guardrail permits opt-in dev auth.
+  write_env SUPABASE_URL ""
+  write_env SUPABASE_JWT_SECRET ""
   write_env CARENTA_LOCAL_DEV_AUTH "true"
-  note "Enabled CARENTA_LOCAL_DEV_AUTH=true in $ENV_FILE."
-  note "Run backend with: uv run --project services/carenta-api --env-file services/carenta-api/.env uvicorn app.main:app --app-dir services/carenta-api --host 0.0.0.0 --port 8000"
+  ENV_FILE="$API_ENV and $MOBILE_ENV"
   finish
+  note "Enabled CARENTA_LOCAL_DEV_AUTH='true' in $API_ENV."
+  note "Start API: uv run --project services/carenta-api --env-file services/carenta-api/.env uvicorn app.main:app --app-dir services/carenta-api --host 0.0.0.0 --port 8000"
   return 0
 fi
 
@@ -236,15 +248,28 @@ say "We'll open Supabase Dashboard so you can copy public project settings."
 open_url "https://supabase.com/dashboard/projects"
 step "Select your CARENTA project -> Project Settings -> API."
 step "Copy Project URL (https://<ref>.supabase.co) and the anon public key."
-ENV_FILE="$REPO_ROOT/apps/mobile/.env"
-ask SUPABASE_URL "Paste Supabase Project URL (https://...):"
-ask SUPABASE_ANON_KEY "Paste Supabase anon public key:"
-write_env EXPO_PUBLIC_SUPABASE_URL "$SUPABASE_URL"
-write_env EXPO_PUBLIC_SUPABASE_ANON_KEY "$SUPABASE_ANON_KEY"
-note "NEVER place SUPABASE_SERVICE_ROLE_KEY into apps/mobile/.env."
+ENV_FILE="$MOBILE_ENV"
+while true; do
+  ask EXPO_PUBLIC_SUPABASE_URL "Paste Supabase Project URL (https://...):"
+  if [[ "$EXPO_PUBLIC_SUPABASE_URL" =~ ^https://[^[:space:]]+$ ]]; then
+    break
+  fi
+  warn "SUPABASE_URL must start with https://."
+done
+while true; do
+  ask EXPO_PUBLIC_SUPABASE_ANON_KEY "Paste Supabase anon public key:"
+  if [[ -n "$EXPO_PUBLIC_SUPABASE_ANON_KEY" ]]; then
+    break
+  fi
+  warn "Anon public key cannot be empty."
+done
+write_env EXPO_PUBLIC_SUPABASE_URL "$EXPO_PUBLIC_SUPABASE_URL"
+write_env EXPO_PUBLIC_SUPABASE_ANON_KEY "$EXPO_PUBLIC_SUPABASE_ANON_KEY"
+note "NEVER place SUPABASE_SERVICE_ROLE_KEY inside apps/mobile/.env."
 
-ENV_FILE="$REPO_ROOT/services/carenta-api/.env"
-write_env SUPABASE_URL "$SUPABASE_URL"
+ENV_FILE="$API_ENV"
+write_env SUPABASE_URL "$EXPO_PUBLIC_SUPABASE_URL"
+write_env SUPABASE_ANON_KEY "$EXPO_PUBLIC_SUPABASE_ANON_KEY"
 write_env CARENTA_LOCAL_DEV_AUTH "false"
 
 # ── Stage 4: Optional Backend HS256 JWT Secret ────────────────────────────
@@ -253,10 +278,15 @@ say "FastAPI verifies asymmetric JWTs via JWKS automatically using SUPABASE_URL.
 step "Only needed for legacy HS256 tokens: Project Settings -> API -> JWT Settings -> JWT Secret."
 if confirm "Configure optional HS256 SUPABASE_JWT_SECRET fallback in backend .env?"; then
   ask_secret SUPABASE_JWT_SECRET "Paste Supabase JWT Secret:"
-  write_env SUPABASE_JWT_SECRET "$SUPABASE_JWT_SECRET"
+  if [[ -n "$SUPABASE_JWT_SECRET" ]]; then
+    write_env SUPABASE_JWT_SECRET "$SUPABASE_JWT_SECRET"
+  fi
 fi
 
+ENV_FILE="$MOBILE_ENV and $API_ENV"
 finish
+note "Start API: uv run --project services/carenta-api --env-file services/carenta-api/.env uvicorn app.main:app --app-dir services/carenta-api --host 0.0.0.0 --port 8000"
+note "Start Mobile: (cd apps/mobile && npm start -- --clear --lan)"
 }
 
 run_wizard "$@"; exit
