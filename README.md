@@ -53,6 +53,14 @@ ipconfig getifaddr en0
 
 Use the real address, not `localhost`, `127.0.0.1`, or `0.0.0.0`. Values prefixed with `EXPO_PUBLIC_` are public and bundled into the app; never put secrets there. `.env` is ignored by Git.
 
+### Interactive setup wizard
+
+Run the guided environment wizard from the repository root to populate local LAN and Supabase settings safely without manual copy-paste errors:
+
+```bash
+./scripts/setup-carenta-env.sh
+```
+
 ## Run
 
 Start the API first in a new terminal. From the repository root:
