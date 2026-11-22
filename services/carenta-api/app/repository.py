@@ -1,14 +1,16 @@
 """In-memory data repository for CARENTA API.
 
-Provides user-scoped thread-safe storage for transactions, goals, and budget configuration.
-Enforces idempotency keys, deterministic queries, and calculation consistency.
+Architecture Note:
+    Phase 1 single in-memory store baseline. User authentication, RLS, and multi-tenancy
+    are mocked / single-tenant until Supabase integration in subsequent phase (Issue #42 / #46).
+    Enforces idempotency keys, deterministic queries, and calculation consistency.
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import threading
 import uuid
-from datetime import date, datetime, timezone
 from typing import Optional
 
 from app.budget import (
@@ -20,9 +22,35 @@ from app.schemas import (
     BudgetSummaryResponse,
     GoalCreate,
     GoalResponse,
+    GoalUpdate,
     TransactionCreate,
     TransactionResponse,
 )
+
+# Standard timezone for CARENTA (Asia/Ho_Chi_Minh, UTC+7)
+LOCAL_TZ = dt.timezone(dt.timedelta(hours=7))
+
+
+def get_current_date() -> dt.date:
+    """Return the current local calendar date in Asia/Ho_Chi_Minh."""
+    return dt.datetime.now(LOCAL_TZ).date()
+
+
+def calculate_days_remaining_to_month_end(ref_date: dt.date) -> int:
+    """Derive remaining days inclusively from ref_date to the end of the month."""
+    year = ref_date.year
+    month = ref_date.month
+    if month == 12:
+        next_month = dt.date(year + 1, 1, 1)
+    else:
+        next_month = dt.date(year, month + 1, 1)
+    last_day_of_month = next_month - dt.timedelta(days=1)
+    return max(1, (last_day_of_month - ref_date).days + 1)
+
+
+class IdempotencyConflictError(Exception):
+    """Raised when an idempotency key is reused with a different payload."""
+    pass
 
 
 class InMemoryRepository:
@@ -33,11 +61,11 @@ class InMemoryRepository:
         self._goals: dict[str, dict] = {}
         self._active_goal_id: Optional[str] = None
 
-        # User budget configuration baseline (can be configured or defaulted)
+        # User budget configuration baseline (defaults for planning)
         self._opening_balance: int = 0
         self._unpaid_commitments: int = 0
         self._savings_reserved: int = 0
-        self._planning_days_remaining: int = 30
+        self._manual_planning_days: Optional[int] = None
 
     def reset(self) -> None:
         """Clear all stored data (useful for test isolation)."""
@@ -49,7 +77,7 @@ class InMemoryRepository:
             self._opening_balance = 0
             self._unpaid_commitments = 0
             self._savings_reserved = 0
-            self._planning_days_remaining = 30
+            self._manual_planning_days = None
 
     def configure_budget(
         self,
@@ -66,20 +94,30 @@ class InMemoryRepository:
             if savings_reserved is not None:
                 self._savings_reserved = savings_reserved
             if planning_days_remaining is not None:
-                self._planning_days_remaining = planning_days_remaining
+                self._manual_planning_days = planning_days_remaining
 
     # --- Transactions ---
 
     def create_transaction(self, data: TransactionCreate) -> TransactionResponse:
         with self._lock:
             # Check idempotency
-            if data.idempotency_key and data.idempotency_key in self._idempotency_map:
+            if data.idempotency_key in self._idempotency_map:
                 existing_id = self._idempotency_map[data.idempotency_key]
                 record = self._transactions[existing_id]
+                # Plan §9: A retry with mismatched payload must return a conflict
+                if (
+                    record["amount"] != data.amount
+                    or record["kind"] != data.kind
+                    or record["category"] != data.category
+                    or record["date"] != data.date
+                ):
+                    raise IdempotencyConflictError(
+                        "Idempotency key conflict: payload does not match the original transaction"
+                    )
                 return TransactionResponse(**record)
 
             tx_id = str(uuid.uuid4())
-            now = datetime.now(timezone.utc)
+            now = dt.datetime.now(dt.timezone.utc)
             record = {
                 "id": tx_id,
                 "amount": data.amount,
@@ -87,18 +125,18 @@ class InMemoryRepository:
                 "category": data.category,
                 "date": data.date,
                 "note": data.note,
+                "idempotency_key": data.idempotency_key,
                 "created_at": now,
             }
             self._transactions[tx_id] = record
-            if data.idempotency_key:
-                self._idempotency_map[data.idempotency_key] = tx_id
+            self._idempotency_map[data.idempotency_key] = tx_id
 
             return TransactionResponse(**record)
 
     def list_transactions(
         self,
-        start_date: Optional[date] = None,
-        end_date: Optional[date] = None,
+        start_date: Optional[dt.date] = None,
+        end_date: Optional[dt.date] = None,
         kind: Optional[str] = None,
     ) -> list[TransactionResponse]:
         with self._lock:
@@ -124,17 +162,18 @@ class InMemoryRepository:
 
     # --- Goals ---
 
-    def set_active_goal(self, data: GoalCreate, today: Optional[date] = None) -> GoalResponse:
-        current_date = today or date.today()
+    def set_active_goal(self, data: GoalCreate, today: Optional[dt.date] = None) -> GoalResponse:
+        """Create or replace active goal. Rejects client-supplied balance overrides."""
+        current_date = today or get_current_date()
         with self._lock:
             goal_id = str(uuid.uuid4())
-            now = datetime.now(timezone.utc)
+            now = dt.datetime.now(dt.timezone.utc)
             record = {
                 "id": goal_id,
                 "title": data.title,
                 "target_amount": data.target_amount,
                 "deadline": data.deadline,
-                "allocated_amount": data.initial_allocated,
+                "allocated_amount": 0,  # Starts strictly at 0 (reject client overrides)
                 "created_at": now,
             }
             self._goals[goal_id] = record
@@ -142,21 +181,48 @@ class InMemoryRepository:
 
         return self._format_goal(record, current_date)
 
-    def get_active_goal(self, today: Optional[date] = None) -> Optional[GoalResponse]:
-        current_date = today or date.today()
+    def update_active_goal(self, data: GoalUpdate, today: Optional[dt.date] = None) -> Optional[GoalResponse]:
+        """Update existing active goal while strictly preserving allocated savings."""
+        current_date = today or get_current_date()
+        with self._lock:
+            if not self._active_goal_id or self._active_goal_id not in self._goals:
+                return None
+            record = self._goals[self._active_goal_id]
+            if data.title is not None:
+                record["title"] = data.title
+            if data.target_amount is not None:
+                record["target_amount"] = data.target_amount
+            if data.deadline is not None:
+                record["deadline"] = data.deadline
+
+        return self._format_goal(record, current_date)
+
+    def allocate_to_active_goal(self, amount: int, today: Optional[dt.date] = None) -> Optional[GoalResponse]:
+        """Allocate virtual savings to the active goal."""
+        current_date = today or get_current_date()
+        with self._lock:
+            if not self._active_goal_id or self._active_goal_id not in self._goals:
+                return None
+            record = self._goals[self._active_goal_id]
+            record["allocated_amount"] += amount
+
+        return self._format_goal(record, current_date)
+
+    def get_active_goal(self, today: Optional[dt.date] = None) -> Optional[GoalResponse]:
+        current_date = today or get_current_date()
         with self._lock:
             if not self._active_goal_id or self._active_goal_id not in self._goals:
                 return None
             record = self._goals[self._active_goal_id]
         return self._format_goal(record, current_date)
 
-    def list_goals(self, today: Optional[date] = None) -> list[GoalResponse]:
-        current_date = today or date.today()
+    def list_goals(self, today: Optional[dt.date] = None) -> list[GoalResponse]:
+        current_date = today or get_current_date()
         with self._lock:
             records = list(self._goals.values())
         return [self._format_goal(r, current_date) for r in records]
 
-    def _format_goal(self, record: dict, today: date) -> GoalResponse:
+    def _format_goal(self, record: dict, today: dt.date) -> GoalResponse:
         proj = calculate_goal_projection(
             target=record["target_amount"],
             allocated_savings=record["allocated_amount"],
@@ -172,6 +238,7 @@ class InMemoryRepository:
             remaining_target=proj.remaining_target,
             saving_days=proj.saving_days,
             suggested_daily_saving=proj.suggested_daily_saving,
+            status=proj.status,
             is_completed=proj.is_completed,
             created_at=record["created_at"],
         )
@@ -180,17 +247,24 @@ class InMemoryRepository:
 
     def get_budget_summary(
         self,
-        today: Optional[date] = None,
+        today: Optional[dt.date] = None,
         days_remaining: Optional[int] = None,
     ) -> BudgetSummaryResponse:
-        current_date = today or date.today()
+        current_date = today or get_current_date()
 
         with self._lock:
             all_tx = list(self._transactions.values())
             opening = self._opening_balance
             commitments = self._unpaid_commitments
             reserved = self._savings_reserved
-            effective_days = days_remaining or self._planning_days_remaining
+
+            # Derive effective remaining days to month-end inclusively
+            if days_remaining is not None:
+                effective_days = days_remaining
+            elif self._manual_planning_days is not None:
+                effective_days = self._manual_planning_days
+            else:
+                effective_days = calculate_days_remaining_to_month_end(current_date)
 
             # Allocated savings from active goal if any
             savings_allocated = 0
@@ -202,7 +276,7 @@ class InMemoryRepository:
         total_expense = sum(t["amount"] for t in all_tx if t["kind"] == "expense")
         cash = opening + total_income - total_expense
 
-        # Calculate safe to spend
+        # Calculate current safe to spend
         sts = calculate_safe_to_spend(
             cash=cash,
             unpaid_commitments=commitments,
@@ -215,9 +289,14 @@ class InMemoryRepository:
             t["amount"] for t in all_tx if t["kind"] == "expense" and t["date"] == current_date
         )
 
+        # Compute start-of-day figure from unclamped discretionary_raw + spent_today
+        # (Fixes review issue #2: prevents positive daily budget when user has shortfall)
+        discretionary_raw_at_start = sts.discretionary_raw + spent_today
+        safe_to_spend_at_start = max(0, discretionary_raw_at_start)
+
         # UC05: Budget Recovery calculation
         recovery = calculate_budget_recovery(
-            safe_to_spend_at_start=sts.safe_to_spend + spent_today,
+            safe_to_spend_at_start=safe_to_spend_at_start,
             days_remaining_inclusive=effective_days,
             spent_today=spent_today,
         )

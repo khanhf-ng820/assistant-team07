@@ -1,10 +1,11 @@
 """Tests for deterministic budget calculation engine (UC04, UC05, Goal Projections).
 
 Verifies 100% deterministic math without any external AI/LLM dependency,
-covering edge cases (zero days, zero income, funding shortfall, overspending recovery).
+covering edge cases (zero days, zero income, funding shortfall, overspending recovery,
+due-today and overdue goal statuses).
 """
 
-from datetime import date
+import datetime as dt
 from app.budget import (
     calculate_budget_recovery,
     calculate_daily_allowance,
@@ -61,8 +62,6 @@ def test_daily_allowance_boundary_conditions():
 
 def test_budget_recovery_under_normal_spending():
     """When user spends within today's allowance, subsequent daily limit is preserved or adjusted."""
-    # 1,500,000 safe-to-spend across 15 days -> initial daily allowance = 100,000
-    # User spends 80,000 today
     recovery = calculate_budget_recovery(
         safe_to_spend_at_start=1_500_000,
         days_remaining_inclusive=15,
@@ -74,15 +73,12 @@ def test_budget_recovery_under_normal_spending():
     assert recovery.is_overspent_today is False
     assert recovery.overspent_amount_today == 0
     assert recovery.subsequent_days == 14
-    # Remaining safe to spend = 1,420,000 over 14 days = 101,428 VND/day
     assert recovery.subsequent_daily_limit == 101_428
     assert recovery.is_period_exhausted is False
 
 
 def test_budget_recovery_under_overspending_uc05():
     """UC05: When user overspends today, subsequent daily limits are dynamically reduced."""
-    # 1,500,000 safe-to-spend across 15 days -> initial daily allowance = 100,000
-    # User overspends by spending 240,000 today (140,000 over budget)
     recovery = calculate_budget_recovery(
         safe_to_spend_at_start=1_500_000,
         days_remaining_inclusive=15,
@@ -94,7 +90,6 @@ def test_budget_recovery_under_overspending_uc05():
     assert recovery.is_overspent_today is True
     assert recovery.overspent_amount_today == 140_000
     assert recovery.subsequent_days == 14
-    # Remaining safe to spend = 1,500,000 - 240,000 = 1,260,000 over 14 days = 90,000 VND/day
     assert recovery.subsequent_daily_limit == 90_000
     assert recovery.is_period_exhausted is False
 
@@ -123,35 +118,54 @@ def test_goal_projection_golden_example():
     proj = calculate_goal_projection(
         target=2_000_000,
         allocated_savings=1_250_000,
-        today=date(2026, 7, 12),
-        deadline=date(2026, 8, 11),
+        today=dt.date(2026, 7, 12),
+        deadline=dt.date(2026, 8, 11),
     )
     assert proj.remaining_target == 750_000
     assert proj.saving_days == 30
     assert proj.suggested_daily_saving == 25_000
+    assert proj.status == "on_track"
     assert proj.is_completed is False
 
 
-def test_goal_projection_completed_or_past_due():
-    """Goal already met or deadline passed."""
-    # Completed goal
-    proj_done = calculate_goal_projection(
+def test_goal_projection_due_today_and_overdue_and_completed():
+    """Review item #3: Distinct states for due-today, overdue, and completed."""
+    today = dt.date(2026, 11, 22)
+
+    # 1. Due today: suggestion must be the full remaining target, not 0!
+    proj_due_today = calculate_goal_projection(
+        target=1_000_000,
+        allocated_savings=400_000,
+        today=today,
+        deadline=today,
+    )
+    assert proj_due_today.remaining_target == 600_000
+    assert proj_due_today.saving_days == 0
+    assert proj_due_today.suggested_daily_saving == 600_000
+    assert proj_due_today.status == "due_today"
+    assert proj_due_today.is_completed is False
+
+    # 2. Overdue: deadline passed
+    proj_overdue = calculate_goal_projection(
+        target=1_000_000,
+        allocated_savings=400_000,
+        today=today,
+        deadline=dt.date(2026, 11, 20),
+    )
+    assert proj_overdue.remaining_target == 600_000
+    assert proj_overdue.saving_days == 0
+    assert proj_overdue.suggested_daily_saving == 0
+    assert proj_overdue.status == "overdue"
+    assert proj_overdue.is_completed is False
+
+    # 3. Completed goal
+    proj_completed = calculate_goal_projection(
         target=1_000_000,
         allocated_savings=1_000_000,
-        today=date(2026, 7, 12),
-        deadline=date(2026, 8, 11),
+        today=today,
+        deadline=dt.date(2026, 11, 25),
     )
-    assert proj_done.remaining_target == 0
-    assert proj_done.suggested_daily_saving == 0
-    assert proj_done.is_completed is True
-
-    # Past due goal
-    proj_past = calculate_goal_projection(
-        target=1_000_000,
-        allocated_savings=500_000,
-        today=date(2026, 8, 15),
-        deadline=date(2026, 8, 11),
-    )
-    assert proj_past.saving_days == 0
-    assert proj_past.suggested_daily_saving == 0
-    assert proj_past.is_completed is False
+    assert proj_completed.remaining_target == 0
+    assert proj_completed.suggested_daily_saving == 0
+    assert proj_completed.status == "completed"
+    assert proj_completed.is_completed is True

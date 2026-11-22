@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import Literal
+from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -16,14 +16,16 @@ class TransactionBase(BaseModel):
 
 
 class TransactionCreate(TransactionBase):
-    idempotency_key: str | None = Field(
-        default=None,
-        description="Optional unique key to prevent duplicate submissions",
+    idempotency_key: str = Field(
+        min_length=1,
+        max_length=100,
+        description="Unique key to guarantee idempotent transaction creation",
     )
 
 
 class TransactionResponse(TransactionBase):
     id: str = Field(description="Unique transaction ID")
+    idempotency_key: str = Field(description="Transaction idempotency key")
     created_at: dt.datetime = Field(description="Creation timestamp")
     model_config = ConfigDict(from_attributes=True)
 
@@ -42,11 +44,14 @@ class GoalBase(BaseModel):
 
 
 class GoalCreate(GoalBase):
-    initial_allocated: int = Field(
-        default=0,
-        ge=0,
-        description="Initial amount already saved/allocated in integer VND",
-    )
+    # Plan §9: Goal creation rejects client-supplied cash or saved-balance overrides
+    pass
+
+
+class GoalUpdate(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    target_amount: Optional[int] = Field(default=None, gt=0)
+    deadline: Optional[dt.date] = Field(default=None)
 
 
 class GoalResponse(GoalBase):
@@ -56,6 +61,9 @@ class GoalResponse(GoalBase):
     saving_days: int = Field(description="Number of saving days left")
     suggested_daily_saving: int = Field(
         description="Deterministic suggested daily saving rate in integer VND"
+    )
+    status: Literal["on_track", "due_today", "overdue", "completed"] = Field(
+        description="Goal progress status"
     )
     is_completed: bool = Field(description="Whether the goal has been achieved")
     created_at: dt.datetime = Field(description="Creation timestamp")
@@ -72,7 +80,7 @@ class BudgetSummaryResponse(BaseModel):
     protected: int = Field(description="Total protected funds (commitments + savings)")
     safe_to_spend: int = Field(description="Safe-to-Spend (Tiền còn lại, UC04) in integer VND")
     funding_shortfall: int = Field(description="Funding shortfall if commitments exceed cash")
-    days_remaining: int = Field(description="Remaining days in planning period (inclusive)")
+    days_remaining: int = Field(description="Remaining days in planning period (inclusive to month-end)")
     daily_budget: int = Field(description="Initial daily allowance (Hạn mức trong ngày)")
     spent_today: int = Field(description="Total discretionary spending recorded for today")
     remaining_today: int = Field(description="Remaining allowance for today (negative if overspent)")

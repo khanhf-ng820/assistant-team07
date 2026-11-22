@@ -4,14 +4,16 @@ Implements 100% deterministic math with ZERO LLM calls for:
 - Safe-to-Spend (Tiền còn lại, UC04)
 - Daily Budget / Allowance (Hạn mức trong ngày)
 - Budget Recovery (UC05: auto-recalculating remaining daily limits when overspending occurs)
-- Goal Savings suggestions and projections
+- Goal Savings suggestions and projections with distinct due-today/overdue states
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import math
-from datetime import date
-from typing import NamedTuple
+from typing import Literal, NamedTuple
+
+GoalStatus = Literal["on_track", "due_today", "overdue", "completed"]
 
 
 class SafeToSpendResult(NamedTuple):
@@ -39,6 +41,7 @@ class GoalProjectionResult(NamedTuple):
     remaining_target: int
     saving_days: int
     suggested_daily_saving: int
+    status: GoalStatus
     is_completed: bool
 
 
@@ -128,28 +131,59 @@ def calculate_budget_recovery(
 def calculate_goal_projection(
     target: int,
     allocated_savings: int,
-    today: date,
-    deadline: date,
+    today: dt.date,
+    deadline: dt.date,
 ) -> GoalProjectionResult:
     """Deterministic saving goal calculation.
 
-    Matches golden specification in docs/carenta-implementation-plan.md:
-        remaining_target = max(0, target - allocated_savings)
-        saving_days = deadline_local_date - today_local_date
-        suggested_daily_saving = ceil(remaining_target / saving_days)
-    Example:
-        target: 2,000,000 VND, allocated: 1,250,000 VND
-        today: 2026-07-12, deadline: 2026-08-11 -> 30 days
-        remaining: 750,000 VND -> suggested: 25,000 VND/day
+    Matches specification in docs/carenta-implementation-plan.md (§7, line 205):
+    - Completed goal: remaining == 0 -> completed, suggested 0
+    - Past-due goal: deadline < today -> overdue, suggested 0, saving_days 0
+    - Due-today goal: deadline == today -> due_today, suggested == remaining_target
+    - On-track goal: deadline > today -> ceil(remaining_target / saving_days)
     """
     remaining_target = max(0, target - allocated_savings)
     is_completed = remaining_target == 0
+    days_diff = (deadline - today).days
 
-    saving_days = max(0, (deadline - today).days)
-    if saving_days > 0 and remaining_target > 0:
-        suggested_daily_saving = math.ceil(remaining_target / saving_days)
-    else:
-        suggested_daily_saving = 0
+    if is_completed:
+        return GoalProjectionResult(
+            target=target,
+            allocated=allocated_savings,
+            remaining_target=0,
+            saving_days=max(0, days_diff),
+            suggested_daily_saving=0,
+            status="completed",
+            is_completed=True,
+        )
+
+    if days_diff < 0:
+        # Past-due goal
+        return GoalProjectionResult(
+            target=target,
+            allocated=allocated_savings,
+            remaining_target=remaining_target,
+            saving_days=0,
+            suggested_daily_saving=0,
+            status="overdue",
+            is_completed=False,
+        )
+
+    if days_diff == 0:
+        # Goal is due today! To meet the goal, the entire remaining amount is suggested today.
+        return GoalProjectionResult(
+            target=target,
+            allocated=allocated_savings,
+            remaining_target=remaining_target,
+            saving_days=0,
+            suggested_daily_saving=remaining_target,
+            status="due_today",
+            is_completed=False,
+        )
+
+    # Goal deadline is in the future
+    saving_days = days_diff
+    suggested_daily_saving = math.ceil(remaining_target / saving_days)
 
     return GoalProjectionResult(
         target=target,
@@ -157,5 +191,6 @@ def calculate_goal_projection(
         remaining_target=remaining_target,
         saving_days=saving_days,
         suggested_daily_saving=suggested_daily_saving,
-        is_completed=is_completed,
+        status="on_track",
+        is_completed=False,
     )
