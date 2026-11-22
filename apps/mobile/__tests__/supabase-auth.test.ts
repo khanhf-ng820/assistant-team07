@@ -1,10 +1,12 @@
 import { ApiError } from '../src/api/errors';
+import type { HttpResponse, HttpTransport } from '../src/api/transport';
 import { createSupabaseAuthGateway } from '../src/auth/supabaseAuth';
 
 function jsonResponse(body: unknown, status = 200) {
   return {
     ok: status >= 200 && status < 300,
     status,
+    headers: { get: () => null },
     json: async () => body,
   } as unknown as Response;
 }
@@ -15,14 +17,14 @@ describe('createSupabaseAuthGateway', () => {
     supabaseAnonKey: 'anon-key-placeholder',
   };
 
-  it('signs in with password and parses Supabase session tokens', async () => {
+  it('signs in with password and parses Supabase session tokens using injected clock', async () => {
     const fetchMock = jest.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
       expect(String(url)).toBe('https://proj.supabase.co/auth/v1/token?grant_type=password');
       expect(init?.headers).toMatchObject({ apikey: 'anon-key-placeholder' });
       return jsonResponse({
         access_token: 'access-xyz',
         refresh_token: 'refresh-xyz',
-        expires_at: 1890000000,
+        expires_in: 3600,
         user: { id: 'student-42', email: 'sv@hcmus.edu.vn', role: 'authenticated' },
       });
     });
@@ -30,17 +32,18 @@ describe('createSupabaseAuthGateway', () => {
     const gateway = createSupabaseAuthGateway({
       ...baseOptions,
       fetchImpl: fetchMock as unknown as typeof fetch,
+      now: () => 1_700_000_000_000,
     });
 
     await expect(gateway.signInWithPassword('sv@hcmus.edu.vn', 'secret')).resolves.toEqual({
       accessToken: 'access-xyz',
       refreshToken: 'refresh-xyz',
-      expiresAt: 1890000000,
+      expiresAt: 1_700_003_600,
       user: { id: 'student-42', email: 'sv@hcmus.edu.vn', role: 'authenticated' },
     });
   });
 
-  it('maps 400/401 credentials failure and network failure cleanly', async () => {
+  it('maps 400/401 credentials failure, auth-scoped network errors, and malformed responses cleanly', async () => {
     const badCredsGateway = createSupabaseAuthGateway({
       ...baseOptions,
       fetchImpl: (async () =>
@@ -51,6 +54,7 @@ describe('createSupabaseAuthGateway', () => {
       code: 'AUTH_INVALID_CREDENTIALS',
       status: 400,
       retryable: false,
+      userMessage: 'Email hoặc mật khẩu chưa đúng.',
     });
 
     const offlineGateway = createSupabaseAuthGateway({
@@ -62,43 +66,77 @@ describe('createSupabaseAuthGateway', () => {
     await expect(offlineGateway.signInWithPassword('a@b.com', 'pw')).rejects.toMatchObject({
       code: 'NETWORK_UNAVAILABLE',
       retryable: true,
+      userMessage: 'Không thể kết nối dịch vụ đăng nhập. Kiểm tra mạng và thử lại.',
+    });
+
+    const badJsonTransport: HttpTransport = {
+      send: async (): Promise<HttpResponse> => ({
+        ok: true,
+        status: 200,
+        body: { ok: false },
+      }),
+    };
+    const malformedGateway = createSupabaseAuthGateway({
+      ...baseOptions,
+      httpTransport: badJsonTransport,
+    });
+    await expect(malformedGateway.signInWithPassword('a@b.com', 'pw')).rejects.toMatchObject({
+      code: 'UNEXPECTED_RESPONSE',
+      retryable: false,
     });
   });
 
-  it('refreshes session tokens, maps invalid refresh to AUTH_TOKEN_EXPIRED, and tolerates logout network errors', async () => {
-    const refreshMock = jest
+  it('refreshes session tokens via shared HttpTransport, maps invalid refresh, and tolerates logout failures', async () => {
+    const send = jest
       .fn()
-      .mockResolvedValueOnce(
-        jsonResponse({
-          access_token: 'access-new',
-          refresh_token: 'refresh-new',
-          expires_in: 3600,
-          user: { id: 'student-42', email: 'sv@hcmus.edu.vn', role: 'authenticated' },
-        })
-      )
-      .mockResolvedValueOnce(jsonResponse({ msg: 'Invalid Refresh Token' }, 401))
-      .mockRejectedValueOnce(new TypeError('Offline during signOut'));
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        body: {
+          ok: true,
+          data: {
+            access_token: 'access-new',
+            refresh_token: 'refresh-new',
+            expires_in: 3600,
+            user: { id: 'student-42', email: 'sv@hcmus.edu.vn', role: 'authenticated' },
+          },
+        },
+      } satisfies HttpResponse)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        body: { ok: true, data: { msg: 'Invalid Refresh Token' } },
+      } satisfies HttpResponse)
+      .mockRejectedValueOnce(new ApiError({ code: 'NETWORK_UNAVAILABLE', message: 'Offline', retryable: true }));
 
     const gateway = createSupabaseAuthGateway({
       ...baseOptions,
-      fetchImpl: refreshMock as unknown as typeof fetch,
+      httpTransport: { send },
+      now: () => 1_700_000_000_000,
     });
 
     const refreshed = await gateway.refreshSession('refresh-old');
     expect(refreshed.accessToken).toBe('access-new');
     expect(refreshed.refreshToken).toBe('refresh-new');
-    expect(refreshed.user.id).toBe('student-42');
+    expect(refreshed.expiresAt).toBe(1_700_003_600);
 
     await expect(gateway.refreshSession('revoked')).rejects.toMatchObject({
       name: 'ApiError',
       code: 'AUTH_TOKEN_EXPIRED',
       status: 401,
+      retryable: false,
     });
 
     await expect(gateway.signOut('access-new')).resolves.toBeUndefined();
+    expect(send).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        url: 'https://proj.supabase.co/auth/v1/logout',
+        parseJson: false,
+      })
+    );
   });
 
-  it('aborts hung auth requests on timeout and maps transient 5xx refreshes as retryable', async () => {
+  it('maps auth request timeout to auth-scoped TIMEOUT error and 5xx refreshes as retryable', async () => {
     jest.useFakeTimers();
     const slowGateway = createSupabaseAuthGateway({
       ...baseOptions,
@@ -114,6 +152,7 @@ describe('createSupabaseAuthGateway', () => {
     await expect(pending).rejects.toMatchObject({
       code: 'TIMEOUT',
       retryable: true,
+      userMessage: 'Kết nối đăng nhập quá thời gian. Vui lòng thử lại.',
     });
     jest.useRealTimers();
 

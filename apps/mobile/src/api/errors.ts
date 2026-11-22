@@ -5,6 +5,7 @@ export type ApiErrorCode =
   | 'ABORTED'
   | 'UNEXPECTED_RESPONSE'
   | 'AUTH_REQUIRED'
+  | 'AUTH_INVALID_CREDENTIALS'
   | 'AUTH_TOKEN_EXPIRED'
   | 'AUTH_INVALID_TOKEN'
   | 'AUTH_SERVICE_UNAVAILABLE'
@@ -45,8 +46,25 @@ export class ApiError extends Error {
   }
 }
 
+export function isApiError(value: unknown): value is ApiError {
+  return value instanceof ApiError;
+}
+
+export function isOfflineFallbackError(value: unknown): value is ApiError {
+  return isApiError(value) && (value.code === 'NETWORK_UNAVAILABLE' || value.code === 'TIMEOUT');
+}
+
+export function createAbortedError(): ApiError {
+  return new ApiError({
+    code: 'ABORTED',
+    message: 'Request cancelled.',
+    retryable: false,
+  });
+}
+
 const VIETNAMESE_CODE_MESSAGES: Record<string, string> = {
   AUTH_REQUIRED: 'Vui lòng đăng nhập để tiếp tục.',
+  AUTH_INVALID_CREDENTIALS: 'Email hoặc mật khẩu chưa đúng.',
   AUTH_TOKEN_EXPIRED: 'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.',
   AUTH_INVALID_TOKEN: 'Phiên đăng nhập không hợp lệ, vui lòng đăng nhập lại.',
   AUTH_SERVICE_UNAVAILABLE: 'Dịch vụ xác thực tạm thời gián đoạn, vui lòng thử lại.',
@@ -68,7 +86,6 @@ function defaultCodeForStatus(status: number): ApiErrorCode {
   if (status === 409) return 'CONFLICT';
   if (status === 422) return 'VALIDATION_ERROR';
   if (status === 429) return 'RATE_LIMITED';
-  if (status === 503) return 'SERVER_ERROR';
   if (status >= 500) return 'SERVER_ERROR';
   return 'HTTP_ERROR';
 }
@@ -174,5 +191,78 @@ export function normalizeHttpError(
     requestId: headerRequestId,
     retryable,
     userMessage: localizedUserMessage(code, status),
+  });
+}
+
+function extractAuthErrorMessage(body: unknown, status: number): string {
+  if (body && typeof body === 'object') {
+    const rec = body as Record<string, unknown>;
+    if (typeof rec.error_description === 'string' && rec.error_description) {
+      return rec.error_description;
+    }
+    if (typeof rec.msg === 'string' && rec.msg) return rec.msg;
+    if (typeof rec.message === 'string' && rec.message) return rec.message;
+  }
+  return `Authentication failed (${status}).`;
+}
+
+export function normalizeSupabaseAuthError(
+  status: number,
+  body: unknown,
+  operation: 'signin' | 'refresh'
+): ApiError {
+  const message = extractAuthErrorMessage(body, status);
+  const isTransient = status >= 500 || status === 429;
+
+  if (operation === 'refresh') {
+    return new ApiError({
+      code: isTransient ? 'SERVER_ERROR' : 'AUTH_TOKEN_EXPIRED',
+      message,
+      status,
+      retryable: isTransient,
+      userMessage: isTransient
+        ? 'Dịch vụ xác thực đang bận, vui lòng thử lại sau.'
+        : VIETNAMESE_CODE_MESSAGES.AUTH_TOKEN_EXPIRED,
+    });
+  }
+
+  const isCreds = status === 400 || status === 401;
+  return new ApiError({
+    code: isCreds ? 'AUTH_INVALID_CREDENTIALS' : isTransient ? 'SERVER_ERROR' : 'HTTP_ERROR',
+    message,
+    status,
+    retryable: isTransient,
+    userMessage: isCreds
+      ? VIETNAMESE_CODE_MESSAGES.AUTH_INVALID_CREDENTIALS
+      : isTransient
+        ? 'Dịch vụ xác thực đang bận, vui lòng thử lại sau.'
+        : message,
+  });
+}
+
+const TRANSPORT_SCOPE_MESSAGES: Record<'backend' | 'auth', Partial<Record<'TIMEOUT' | 'NETWORK_UNAVAILABLE', string>>> = {
+  backend: {
+    TIMEOUT: 'Kết nối quá thời gian. Vui lòng thử lại.',
+    NETWORK_UNAVAILABLE: 'Không thể kết nối máy chủ. Kiểm tra mạng LAN và thử lại.',
+  },
+  auth: {
+    TIMEOUT: 'Kết nối đăng nhập quá thời gian. Vui lòng thử lại.',
+    NETWORK_UNAVAILABLE: 'Không thể kết nối dịch vụ đăng nhập. Kiểm tra mạng và thử lại.',
+  },
+};
+
+export function localizeTransportError(error: ApiError, scope: 'backend' | 'auth'): ApiError {
+  if (error.code !== 'TIMEOUT' && error.code !== 'NETWORK_UNAVAILABLE') {
+    return error;
+  }
+  const userMessage = TRANSPORT_SCOPE_MESSAGES[scope][error.code];
+  if (!userMessage) return error;
+  return new ApiError({
+    code: error.code,
+    message: error.message,
+    status: error.status,
+    requestId: error.requestId,
+    retryable: error.retryable,
+    userMessage,
   });
 }

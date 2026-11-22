@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { createCarentaApiClient } from '../api/client';
+import type { HealthResponse } from '../api/contracts';
 import { useOptionalAuth } from '../auth/AuthContext';
-import { apiBaseUrl as defaultApiBaseUrl } from '../config';
 import { colors, type } from '../theme';
 
 type ConnectionState = 'idle' | 'checking' | 'connected' | 'error';
@@ -14,10 +13,21 @@ const messages: Record<ConnectionState, string> = {
   error: 'Không kết nối được API',
 };
 
-export function ApiHealthCheck({ baseUrl }: { baseUrl?: string }) {
+export interface ApiHealthCheckProps {
+  readonly checkHealth?: (signal?: AbortSignal) => Promise<HealthResponse>;
+}
+
+export function ApiHealthCheck({ checkHealth }: ApiHealthCheckProps = {}) {
   const auth = useOptionalAuth();
   const [state, setState] = useState<ConnectionState>('idle');
   const pending = useRef<AbortController | null>(null);
+
+  const runHealthProbe =
+    checkHealth ??
+    (auth?.isApiConfigured
+      ? (signal?: AbortSignal) => auth.apiClient.checkHealth({ signal })
+      : undefined);
+  const isConfigured = Boolean(runHealthProbe);
 
   useEffect(() => () => {
     pending.current?.abort();
@@ -25,16 +35,12 @@ export function ApiHealthCheck({ baseUrl }: { baseUrl?: string }) {
   }, []);
 
   async function runCheck() {
-    if (!baseUrl || pending.current) return;
+    if (!runHealthProbe || pending.current) return;
     const controller = new AbortController();
     pending.current = controller;
     setState('checking');
-    const client =
-      auth && baseUrl === defaultApiBaseUrl
-        ? auth.apiClient
-        : createCarentaApiClient({ baseUrl });
     try {
-      await client.checkHealth(controller.signal);
+      await runHealthProbe(controller.signal);
       if (pending.current === controller) setState('connected');
     } catch {
       if (pending.current === controller) setState('error');
@@ -43,14 +49,16 @@ export function ApiHealthCheck({ baseUrl }: { baseUrl?: string }) {
     }
   }
 
-  const disabled = !baseUrl || state === 'checking';
+  const disabled = !isConfigured || state === 'checking';
   return (
     <View style={styles.panel}>
       <Text accessibilityRole="header" style={styles.heading}>Kết nối máy chủ</Text>
       <Text accessibilityLiveRegion="polite" style={styles.body}>
-        {baseUrl ? messages[state] : 'Chưa cấu hình API'}
+        {isConfigured ? messages[state] : 'Chưa cấu hình API'}
       </Text>
-      {!baseUrl ? <Text style={styles.body}>Đặt EXPO_PUBLIC_API_URL trong .env rồi khởi động lại Expo.</Text> : null}
+      {!isConfigured ? (
+        <Text style={styles.body}>Đặt EXPO_PUBLIC_API_URL trong .env rồi khởi động lại Expo.</Text>
+      ) : null}
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ disabled, busy: state === 'checking' }}

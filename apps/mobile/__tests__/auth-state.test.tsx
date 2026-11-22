@@ -1,14 +1,46 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { Text, Pressable, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import StatsScreen from '../app/(tabs)/index';
-import { createUserScopedReadCache } from '../src/api/readCache';
+import { ApiError } from '../src/api/errors';
+import { createFetchTransport } from '../src/api/transport';
 import { AuthProvider, useAuth } from '../src/auth/AuthContext';
-import { createMemorySessionStorage } from '../src/auth/storage';
 import type { AuthGateway, AuthSession } from '../src/auth/types';
 import { SignInGate } from '../src/components/SignInGate';
+import { createCarentaRuntime } from '../src/runtime/carentaRuntime';
+import { createMemorySessionStorage } from './helpers/memorySessionStorage';
+
+function jsonResponse(body: unknown, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: () => null },
+    json: async () => body,
+  } as unknown as Response;
+}
+
+const sampleSummary = {
+  cash: 1_200_000,
+  total_income: 1_500_000,
+  total_expense: 300_000,
+  unpaid_commitments: 200_000,
+  savings_allocated: 100_000,
+  savings_reserved: 100_000,
+  protected: 400_000,
+  safe_to_spend: 800_000,
+  funding_shortfall: 0,
+  days_remaining: 10,
+  daily_budget: 80_000,
+  spent_today: 0,
+  remaining_today: 80_000,
+  is_overspent_today: false,
+  overspent_amount_today: 0,
+  subsequent_daily_budget: 80_000,
+  is_period_exhausted: false,
+  engine: 'deterministic_zero_llm_math',
+};
 
 function ProtectedProbe() {
-  const { status, session, signOut, apiClient } = useAuth();
+  const { status, student, signOut, apiClient } = useAuth();
   if (status === 'restoring') {
     return <Text>Đang khôi phục phiên…</Text>;
   }
@@ -18,7 +50,7 @@ function ProtectedProbe() {
   return (
     <View>
       <Text testID="auth-status">{status}</Text>
-      <Text testID="user-email">{session?.user.email ?? 'no-email'}</Text>
+      <Text testID="user-email">{student?.email ?? 'no-email'}</Text>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Gọi API"
@@ -28,7 +60,13 @@ function ProtectedProbe() {
       >
         <Text>Gọi API</Text>
       </Pressable>
-      <Pressable accessibilityRole="button" accessibilityLabel="Đăng xuất" onPress={() => { void signOut(); }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Đăng xuất"
+        onPress={() => {
+          void signOut();
+        }}
+      >
         <Text>Đăng xuất</Text>
       </Pressable>
     </View>
@@ -47,11 +85,17 @@ function makeSession(overrides: Partial<AuthSession> = {}): AuthSession {
 
 describe('AuthProvider and SignInGate', () => {
   it('enters local_dev synchronously without gating when Supabase is not configured', async () => {
+    const runtime = createCarentaRuntime({
+      apiBaseUrl: 'http://192.168.1.10:8000',
+      authMode: { kind: 'local_dev' },
+    });
+
     await render(
-      <AuthProvider isConfigured={false} baseUrl="http://192.168.1.10:8000">
+      <AuthProvider runtime={runtime}>
         <ProtectedProbe />
       </AuthProvider>
     );
+
     expect(screen.getByTestId('auth-status')).toHaveTextContent('local_dev');
     expect(screen.queryByText('Đăng nhập CARENTA')).toBeNull();
   });
@@ -65,8 +109,13 @@ describe('AuthProvider and SignInGate', () => {
       signOut: jest.fn(async () => {}),
     };
 
+    const runtime = createCarentaRuntime({
+      apiBaseUrl: 'http://example.test',
+      authMode: { kind: 'authenticated', storage, authGateway },
+    });
+
     await render(
-      <AuthProvider isConfigured storage={storage} authGateway={authGateway} baseUrl="http://example.test">
+      <AuthProvider runtime={runtime}>
         <ProtectedProbe />
       </AuthProvider>
     );
@@ -81,15 +130,13 @@ describe('AuthProvider and SignInGate', () => {
     await expect(storage.getSession()).resolves.toEqual(createdSession);
   });
 
-  it('restores expired persisted session via refresh and wipes cache on signOut', async () => {
+  it('restores expired persisted session via refresh and wipes storage and cache on signOut', async () => {
     const expiredSession = makeSession({
       accessToken: 'old-token',
       expiresAt: Math.floor(Date.now() / 1000) - 60,
     });
     const refreshedSession = makeSession({ accessToken: 'fresh-token' });
     const storage = createMemorySessionStorage(expiredSession);
-    const readCache = createUserScopedReadCache();
-    readCache.set('student-1', 'budget:summary:default', { safe_to_spend: 100000 });
 
     const authGateway: AuthGateway = {
       signInWithPassword: jest.fn(async () => refreshedSession),
@@ -97,59 +144,109 @@ describe('AuthProvider and SignInGate', () => {
       signOut: jest.fn(async () => {}),
     };
 
+    let offline = false;
+    const fetchMock = jest.fn(async () => {
+      if (offline) throw new TypeError('Network unavailable');
+      return jsonResponse(sampleSummary);
+    });
+
+    const runtime = createCarentaRuntime({
+      apiBaseUrl: 'http://example.test',
+      authMode: { kind: 'authenticated', storage, authGateway },
+      httpTransport: createFetchTransport({ fetchImpl: fetchMock as unknown as typeof fetch }),
+    });
+
     await render(
-      <AuthProvider
-        isConfigured
-        storage={storage}
-        authGateway={authGateway}
-        readCache={readCache}
-        baseUrl="http://example.test"
-      >
+      <AuthProvider runtime={runtime}>
         <ProtectedProbe />
       </AuthProvider>
     );
 
     expect(await screen.findByTestId('auth-status')).toHaveTextContent('authenticated');
     await expect(storage.getSession()).resolves.toEqual(refreshedSession);
-    expect(readCache.get('student-1', 'budget:summary:default')).toBeDefined();
+
+    // Prime private Offline Fallback cache with live read, verify offline hit, then verify signOut wipes it
+    await expect(runtime.apiClient.getBudgetSummary()).resolves.toMatchObject({ fromCache: false });
+    offline = true;
+    await expect(runtime.apiClient.getBudgetSummary()).resolves.toMatchObject({ fromCache: true });
 
     await fireEvent.press(screen.getByRole('button', { name: 'Đăng xuất' }));
 
     expect(await screen.findByText('Đăng nhập CARENTA')).toBeVisible();
     await expect(storage.getSession()).resolves.toBeNull();
-    expect(readCache.get('student-1', 'budget:summary:default')).toBeUndefined();
+    await expect(runtime.apiClient.getBudgetSummary()).rejects.toMatchObject({
+      code: 'NETWORK_UNAVAILABLE',
+    });
   });
 
-  it('clears storage and cache and transitions to signed_out when 401 refresh fails', async () => {
+  it('offers 1-tap restore retry on SignInGate when startup refresh fails transiently', async () => {
+    const expiredSession = makeSession({ expiresAt: Math.floor(Date.now() / 1000) - 60 });
+    const recoveredSession = makeSession({ accessToken: 'recovered-jwt' });
+    const storage = createMemorySessionStorage(expiredSession);
+
+    const authGateway: AuthGateway = {
+      signInWithPassword: jest.fn(async () => recoveredSession),
+      refreshSession: jest
+        .fn()
+        .mockRejectedValueOnce(
+          new ApiError({
+            code: 'NETWORK_UNAVAILABLE',
+            message: 'Offline',
+            retryable: true,
+            userMessage: 'Không thể kết nối dịch vụ đăng nhập.',
+          })
+        )
+        .mockResolvedValueOnce(recoveredSession),
+      signOut: jest.fn(async () => {}),
+    };
+
+    const runtime = createCarentaRuntime({
+      apiBaseUrl: 'http://example.test',
+      authMode: { kind: 'authenticated', storage, authGateway },
+    });
+
+    await render(
+      <AuthProvider runtime={runtime}>
+        <ProtectedProbe />
+      </AuthProvider>
+    );
+
+    expect(await screen.findByText('Không thể kết nối dịch vụ đăng nhập.')).toBeVisible();
+    await fireEvent.press(screen.getByRole('button', { name: 'Thử khôi phục phiên' }));
+
+    expect(await screen.findByTestId('auth-status')).toHaveTextContent('authenticated');
+    await expect(storage.getSession()).resolves.toEqual(recoveredSession);
+  });
+
+  it('clears storage and transitions to signed_out when non-retryable 401 refresh fails', async () => {
     const validSession = makeSession();
     const storage = createMemorySessionStorage(validSession);
-    const readCache = createUserScopedReadCache();
-    readCache.set('student-1', 'budget:summary:default', { safe_to_spend: 50000 });
 
     const authGateway: AuthGateway = {
       signInWithPassword: jest.fn(async () => validSession),
       refreshSession: jest.fn(async () => {
-        throw new Error('Refresh revoked');
+        throw new ApiError({
+          code: 'AUTH_TOKEN_EXPIRED',
+          status: 401,
+          message: 'Refresh revoked',
+          retryable: false,
+        });
       }),
       signOut: jest.fn(async () => {}),
     };
 
-    const fetchImpl = jest.fn(async () => ({
-      ok: false,
-      status: 401,
-      headers: { get: () => null },
-      json: async () => ({ error: { code: 'AUTH_INVALID_TOKEN', message: 'Revoked', request_id: 'r1' } }),
-    })) as unknown as typeof fetch;
+    const fetchImpl = jest.fn(async () =>
+      jsonResponse({ error: { code: 'AUTH_INVALID_TOKEN', message: 'Revoked', request_id: 'r1' } }, 401)
+    );
+
+    const runtime = createCarentaRuntime({
+      apiBaseUrl: 'http://example.test',
+      authMode: { kind: 'authenticated', storage, authGateway },
+      httpTransport: createFetchTransport({ fetchImpl: fetchImpl as unknown as typeof fetch }),
+    });
 
     await render(
-      <AuthProvider
-        isConfigured
-        storage={storage}
-        authGateway={authGateway}
-        readCache={readCache}
-        fetchImpl={fetchImpl}
-        baseUrl="http://example.test"
-      >
+      <AuthProvider runtime={runtime}>
         <ProtectedProbe />
       </AuthProvider>
     );
@@ -161,12 +258,16 @@ describe('AuthProvider and SignInGate', () => {
       expect(screen.getByText('Đăng nhập CARENTA')).toBeVisible();
     });
     await expect(storage.getSession()).resolves.toBeNull();
-    expect(readCache.get('student-1', 'budget:summary:default')).toBeUndefined();
   });
 
   it('refuses silent local_dev on partial Supabase config and validates empty SignInGate submit', async () => {
+    const runtime = createCarentaRuntime({
+      apiBaseUrl: 'http://example.test',
+      authMode: { kind: 'misconfigured', error: 'Thiếu ANON_KEY' },
+    });
+
     await render(
-      <AuthProvider isConfigured={false} isPartialConfig configError="Thiếu ANON_KEY" baseUrl="http://example.test">
+      <AuthProvider runtime={runtime}>
         <ProtectedProbe />
       </AuthProvider>
     );
@@ -191,21 +292,27 @@ describe('AuthProvider and SignInGate', () => {
       signOut: jest.fn(async () => {}),
     };
 
-    const fetchImpl = jest.fn(async () => ({
-      ok: false,
-      status: 401,
-      headers: { get: () => null },
-      json: async () => ({ error: { code: 'AUTH_TOKEN_EXPIRED', message: 'Expired', request_id: 'r1' } }),
-    })) as unknown as typeof fetch;
+    const fetchImpl = jest.fn(async () =>
+      jsonResponse({ error: { code: 'AUTH_TOKEN_EXPIRED', message: 'Expired', request_id: 'r1' } }, 401)
+    );
+
+    const runtime = createCarentaRuntime({
+      apiBaseUrl: 'http://example.test',
+      authMode: { kind: 'authenticated', storage, authGateway },
+      httpTransport: createFetchTransport({ fetchImpl: fetchImpl as unknown as typeof fetch }),
+    });
 
     await render(
-      <AuthProvider isConfigured storage={storage} authGateway={authGateway} fetchImpl={fetchImpl} baseUrl="http://example.test">
+      <AuthProvider runtime={runtime}>
         <ProtectedProbe />
       </AuthProvider>
     );
 
     expect(await screen.findByTestId('auth-status')).toHaveTextContent('authenticated');
     await fireEvent.press(screen.getByRole('button', { name: 'Gọi API' }));
+    await waitFor(() => {
+      expect(authGateway.refreshSession).toHaveBeenCalledTimes(1);
+    });
     await fireEvent.press(screen.getByRole('button', { name: 'Đăng xuất' }));
 
     resolveRefresh(makeSession({ accessToken: 'late-token' }));
@@ -217,35 +324,30 @@ describe('AuthProvider and SignInGate', () => {
   it('renders SessionStatusBar on StatsScreen in authenticated mode and signs out cleanly', async () => {
     const validSession = makeSession();
     const storage = createMemorySessionStorage(validSession);
-    const readCache = createUserScopedReadCache();
-    readCache.set('student-1', 'budget:summary:default', { safe_to_spend: 100000 });
     const authGateway: AuthGateway = {
       signInWithPassword: jest.fn(async () => validSession),
       refreshSession: jest.fn(async () => validSession),
       signOut: jest.fn(async () => {}),
     };
 
+    const runtime = createCarentaRuntime({
+      apiBaseUrl: 'http://example.test',
+      authMode: { kind: 'authenticated', storage, authGateway },
+    });
+
     await render(
-      <AuthProvider
-        isConfigured
-        storage={storage}
-        authGateway={authGateway}
-        readCache={readCache}
-        baseUrl="http://example.test"
-      >
+      <AuthProvider runtime={runtime}>
         <StatsScreen />
       </AuthProvider>
     );
 
     expect(await screen.findByText('sv@hcmus.edu.vn')).toBeVisible();
-    const logoutBtn = screen.getByRole('button', { name: 'Đăng xuất' });
-    await fireEvent.press(logoutBtn);
+    await fireEvent.press(screen.getByRole('button', { name: 'Đăng xuất' }));
 
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: 'Đăng xuất' })).toBeNull();
     });
     expect(screen.queryByText('sv@hcmus.edu.vn')).toBeNull();
     await expect(storage.getSession()).resolves.toBeNull();
-    expect(readCache.get('student-1', 'budget:summary:default')).toBeUndefined();
   });
 });

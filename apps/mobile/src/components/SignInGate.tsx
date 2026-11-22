@@ -5,7 +5,7 @@ import { useAuth } from '../auth/AuthContext';
 import { colors, type } from '../theme';
 
 export function SignInGate() {
-  const { signIn, error } = useAuth();
+  const { signIn, error, canRetryRestore, retryRestore } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
@@ -76,6 +76,20 @@ export function SignInGate() {
           </Text>
         ) : null}
 
+        {canRetryRestore ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Thử khôi phục phiên"
+            disabled={submitting}
+            onPress={() => {
+              void retryRestore();
+            }}
+            style={styles.retryButton}
+          >
+            <Text style={styles.retryButtonText}>Thử khôi phục phiên</Text>
+          </Pressable>
+        ) : null}
+
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Đăng nhập"
@@ -126,6 +140,16 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
   errorText: { ...type.caption, color: '#DC2626', fontWeight: '600' },
+  retryButton: {
+    minHeight: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 12,
+  },
+  retryButtonText: { ...type.body, color: colors.primary, fontWeight: '600' },
   button: {
     minHeight: 48,
     backgroundColor: colors.primary,

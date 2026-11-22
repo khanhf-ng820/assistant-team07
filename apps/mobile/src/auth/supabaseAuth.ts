@@ -1,4 +1,10 @@
-import { ApiError } from '../api/errors';
+import {
+  ApiError,
+  isApiError,
+  localizeTransportError,
+  normalizeSupabaseAuthError,
+} from '../api/errors';
+import { type HttpResponse, type HttpTransport, createFetchTransport } from '../api/transport';
 import type { AuthGateway, AuthSession } from './types';
 
 const AUTH_TIMEOUT_MS = 10_000;
@@ -6,8 +12,10 @@ const AUTH_TIMEOUT_MS = 10_000;
 export interface SupabaseAuthGatewayOptions {
   supabaseUrl: string;
   supabaseAnonKey: string;
+  httpTransport?: HttpTransport;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
+  now?: () => number;
 }
 
 function parseSupabaseSession(body: unknown, fallbackNowSec: number): AuthSession {
@@ -69,32 +77,13 @@ function parseSupabaseSession(body: unknown, fallbackNowSec: number): AuthSessio
   };
 }
 
-async function parseJsonSafe(response: Response): Promise<{ ok: true; data: unknown } | { ok: false }> {
-  try {
-    return { ok: true, data: await response.json() };
-  } catch {
-    return { ok: false };
-  }
-}
-
-function extractAuthErrorMessage(body: unknown, status: number): string {
-  if (body && typeof body === 'object') {
-    const rec = body as Record<string, unknown>;
-    if (typeof rec.error_description === 'string' && rec.error_description) {
-      return rec.error_description;
-    }
-    if (typeof rec.msg === 'string' && rec.msg) return rec.msg;
-    if (typeof rec.message === 'string' && rec.message) return rec.message;
-  }
-  return `Authentication failed (${status}).`;
-}
-
 export function createSupabaseAuthGateway(
   options: SupabaseAuthGatewayOptions
 ): AuthGateway {
-  const fetchFn = options.fetchImpl ?? globalThis.fetch;
+  const transport = options.httpTransport ?? createFetchTransport({ fetchImpl: options.fetchImpl });
   const cleanUrl = options.supabaseUrl.replace(/\/+$/, '');
   const timeoutMs = options.timeoutMs ?? AUTH_TIMEOUT_MS;
+  const nowMs = options.now ?? Date.now;
 
   function baseHeaders(extra?: Record<string, string>): Record<string, string> {
     return {
@@ -110,70 +99,28 @@ export function createSupabaseAuthGateway(
     payload: unknown,
     mode: 'signin' | 'refresh'
   ): Promise<AuthSession> {
-    const controller = new AbortController();
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, timeoutMs);
-
-    let response: Response;
+    let response: HttpResponse;
     try {
-      response = await fetchFn(`${cleanUrl}${path}`, {
+      response = await transport.send({
+        url: `${cleanUrl}${path}`,
         method: 'POST',
         headers: baseHeaders(),
-        body: JSON.stringify(payload),
-        signal: controller.signal,
+        body: payload,
+        timeoutMs,
       });
     } catch (err) {
-      if (timedOut) {
-        throw new ApiError({
-          code: 'TIMEOUT',
-          message: 'Authentication request timed out.',
-          retryable: true,
-          userMessage: 'Kết nối đăng nhập quá thời gian. Vui lòng thử lại.',
-        });
-      }
-      throw new ApiError({
-        code: 'NETWORK_UNAVAILABLE',
-        message: err instanceof Error ? err.message : 'Network error.',
-        retryable: true,
-        userMessage: 'Không thể kết nối dịch vụ đăng nhập. Kiểm tra mạng và thử lại.',
-      });
-    } finally {
-      clearTimeout(timer);
+      throw isApiError(err) ? localizeTransportError(err, 'auth') : err;
     }
 
-    const parsed = await parseJsonSafe(response);
     if (!response.ok) {
-      const message = extractAuthErrorMessage(parsed.ok ? parsed.data : undefined, response.status);
-      const isTransient = response.status >= 500 || response.status === 429;
-      if (mode === 'refresh') {
-        throw new ApiError({
-          code: isTransient ? 'SERVER_ERROR' : 'AUTH_TOKEN_EXPIRED',
-          message,
-          status: response.status,
-          retryable: isTransient,
-          userMessage: isTransient
-            ? 'Dịch vụ xác thực đang bận, vui lòng thử lại sau.'
-            : 'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.',
-        });
-      }
-      const isCreds = response.status === 400 || response.status === 401;
-      throw new ApiError({
-        code: isCreds ? 'AUTH_INVALID_CREDENTIALS' : isTransient ? 'SERVER_ERROR' : 'HTTP_ERROR',
-        message,
-        status: response.status,
-        retryable: isTransient,
-        userMessage: isCreds
-          ? 'Email hoặc mật khẩu chưa đúng.'
-          : isTransient
-            ? 'Dịch vụ xác thực đang bận, vui lòng thử lại sau.'
-            : message,
-      });
+      throw normalizeSupabaseAuthError(
+        response.status,
+        response.body.ok ? response.body.data : undefined,
+        mode
+      );
     }
 
-    if (!parsed.ok) {
+    if (!response.body.ok) {
       throw new ApiError({
         code: 'UNEXPECTED_RESPONSE',
         message: 'Invalid JSON from authentication service.',
@@ -183,7 +130,7 @@ export function createSupabaseAuthGateway(
       });
     }
 
-    return parseSupabaseSession(parsed.data, Math.floor(Date.now() / 1000));
+    return parseSupabaseSession(response.body.data, Math.floor(nowMs() / 1000));
   }
 
   return {
@@ -194,18 +141,16 @@ export function createSupabaseAuthGateway(
       postAuthJson('/auth/v1/token?grant_type=refresh_token', { refresh_token: refreshToken }, 'refresh'),
 
     async signOut(accessToken: string): Promise<void> {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        await fetchFn(`${cleanUrl}/auth/v1/logout`, {
+        await transport.send({
+          url: `${cleanUrl}/auth/v1/logout`,
           method: 'POST',
           headers: baseHeaders({ Authorization: `Bearer ${accessToken}` }),
-          signal: controller.signal,
+          timeoutMs,
+          parseJson: false,
         });
       } catch {
         // Local cleanup proceeds even when logout network call fails.
-      } finally {
-        clearTimeout(timer);
       }
     },
   };

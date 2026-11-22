@@ -1,4 +1,5 @@
 import * as SecureStore from 'expo-secure-store';
+import * as storageModule from '../src/auth/storage';
 import { createSecureSessionStorage } from '../src/auth/storage';
 import type { AuthSession } from '../src/auth/types';
 
@@ -46,5 +47,6 @@ describe('createSecureSessionStorage', () => {
     );
     await expect(storage.getSession()).resolves.toBeNull();
     expect(SecureStore.deleteItemAsync).toHaveBeenCalledTimes(2);
+    expect('createMemorySessionStorage' in storageModule).toBe(false);
   });
 });

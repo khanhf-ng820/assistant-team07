@@ -1,14 +1,14 @@
-export interface AuthUser {
-  id: string;
-  email: string | null;
-  role: string;
+export interface StudentIdentity {
+  readonly id: string;
+  readonly email: string | null;
+  readonly role: string;
 }
 
 export interface AuthSession {
   accessToken: string;
   refreshToken: string;
   expiresAt: number;
-  user: AuthUser;
+  user: StudentIdentity;
 }
 
 export type AuthStatus = 'restoring' | 'authenticated' | 'signed_out' | 'local_dev';

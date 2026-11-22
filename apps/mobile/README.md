@@ -10,11 +10,13 @@ budget application or a pixel-perfect implementation of its exported designs.
 - Two tabs: **Thống kê** and **Tiết kiệm**.
 - Shared plus button and dismissible capture chooser. Manual, receipt, and voice
   options are disabled and explicitly labeled **Chưa triển khai**.
-- On-demand API connection check on Thống kê (`ApiHealthCheck`), typed Phase 1
-  SDK client (`src/api/`), encrypted Auth Session storage via `expo-secure-store`
-  (`src/auth/`), optional Supabase sign-in gate (`SignInGate`), Local Dev Mode
-  when Supabase public env vars are unset, and read-only Student-Identity-scoped
-  Offline Fallback cache (`src/api/readCache.ts`).
+- On-demand API connection check on Thống kê (`ApiHealthCheck`), deep headless
+  runtime (`src/runtime/carentaRuntime.ts`) with private epoch-scoped
+  read-only Offline Fallback cache, unified HTTP transport and contracts
+  (`src/api/transport.ts`, `src/api/contracts.ts`, `src/api/errors.ts`),
+  encrypted Auth Session storage via `expo-secure-store` and Supabase gateway
+  (`src/auth/`), optional Supabase sign-in gate (`SignInGate`), and Local Dev
+  Mode when Supabase public env vars are unset.
 - Initial teal/coral colors, native system font, safe areas and scrollable content.
 
 Financial ledger/savings UI screens, Gemini capture, database queries, and
@@ -163,7 +165,7 @@ Run inside `apps/mobile/`:
 
 ```sh
 npm run typecheck
-npm test -- --runInBand
+BROWSERSLIST=defaults npm test -- --runInBand
 npx expo install --check
 npx expo export --platform ios --output-dir dist/ios
 npx expo export --platform android --output-dir dist/android

@@ -2,11 +2,10 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../../src/auth/AuthContext';
 import { ApiHealthCheck } from '../../src/components/ApiHealthCheck';
 import { PlaceholderScreen } from '../../src/components/PlaceholderScreen';
-import { apiBaseUrl } from '../../src/config';
 import { colors, type } from '../../src/theme';
 
 function SessionStatusBar() {
-  const { status, session, signOut } = useAuth();
+  const { status, student, signOut } = useAuth();
   if (status === 'local_dev') {
     return (
       <Text style={styles.localNote}>
@@ -14,10 +13,10 @@ function SessionStatusBar() {
       </Text>
     );
   }
-  if (status === 'authenticated' && session) {
+  if (status === 'authenticated' && student) {
     return (
       <View style={styles.sessionRow}>
-        <Text style={styles.userText}>{session.user.email ?? session.user.id}</Text>
+        <Text style={styles.userText}>{student.email ?? student.id}</Text>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Đăng xuất"
@@ -37,7 +36,7 @@ function SessionStatusBar() {
 export default function StatsScreen() {
   return (
     <PlaceholderScreen title="Thống kê" description="Chi tiêu và báo cáo sẽ xuất hiện tại đây.">
-      <ApiHealthCheck baseUrl={apiBaseUrl} />
+      <ApiHealthCheck />
       <SessionStatusBar />
     </PlaceholderScreen>
   );
