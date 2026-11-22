@@ -17,7 +17,7 @@ it('starts on Stats and switches between exactly two tabs', async () => {
   expect(screen.getByRole('tab', { name: 'Thống kê' })).toBeSelected();
   await fireEvent.press(screen.getByRole('tab', { name: 'Tiết kiệm' }));
   expect(screen.getByRole('tab', { name: 'Tiết kiệm' })).toBeSelected();
-  expect(screen.getByText('Mục tiêu tiết kiệm sẽ xuất hiện tại đây.')).toBeVisible();
+  expect(screen.getByRole('header', { name: 'Heo tiết kiệm' })).toBeVisible();
 });
 
 it.each(['Thống kê', 'Tiết kiệm'])('opens and closes the same chooser from %s without changing tabs', async (tab) => {
