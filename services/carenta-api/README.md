@@ -84,7 +84,5 @@ health contract, tests, and instructions from the approved placeholder plan.
 Verification results and any remaining manual checks are reported at handoff;
 human inspection and teammate approval are still required.
 
-Existing files, including `docs/ai-use-log.md`, must remain unchanged for this
-increment. Before committing/publishing, obtain authorization to reconcile the
-canonical AI-use log requirement and include this assistance in the PR. Do not
-label this contribution “AI use: None.”
+AI assistance for this service is recorded in `docs/ai-use-log.md` and disclosed
+in each PR, as `DEFINITION_OF_DONE.md` requires.

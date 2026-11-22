@@ -2,17 +2,28 @@
 
 export type GoalStatus = 'on_track' | 'due_today' | 'overdue' | 'completed';
 
-export type SavingsRecommendation = {
-  status: GoalStatus;
+type RecommendationBase = {
   remainingVnd: number;
   /** Days from tomorrow through the deadline; negative when overdue. */
   savingDays: number;
-  /** Suggested daily saving, or null when there is nothing to divide over. */
-  dailyVnd: number | null;
-  /** 30-day projection of the daily saving, capped at the remaining target. */
-  thirtyDayVnd: number | null;
   progressPercent: number;
 };
+
+/**
+ * Daily amounts exist only while there is time left to save; completed and
+ * overdue goals carry null so callers must handle them explicitly.
+ */
+export type SavingsRecommendation = RecommendationBase &
+  (
+    | {
+        status: Extract<GoalStatus, 'on_track' | 'due_today'>;
+        /** Suggested daily saving. */
+        dailyVnd: number;
+        /** 30-day projection of the daily saving, capped at the remaining target. */
+        thirtyDayVnd: number;
+      }
+    | { status: Extract<GoalStatus, 'overdue' | 'completed'>; dailyVnd: null; thirtyDayVnd: null }
+  );
 
 const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 export const MAX_VND = 1_000_000_000_000;

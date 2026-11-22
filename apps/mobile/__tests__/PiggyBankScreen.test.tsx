@@ -65,3 +65,26 @@ it('blocks saving an invalid target or a past deadline', async () => {
   expect(screen.getByText('Hạn mục tiêu không được trước hôm nay.')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Lưu mục tiêu' })).toBeDisabled();
 });
+
+it('shows the overdue state for an existing goal past its deadline and requires a new date', async () => {
+  const snapshot = createDemoSnapshot(today);
+  snapshot.goal.deadline = '2026-07-10';
+  await render(<PiggyBankScreen initialSnapshot={snapshot} today={today} />);
+  await fireEvent.press(screen.getByRole('button', { name: 'Đặt/Thay đổi mục tiêu' }));
+  expect(screen.getByText('Đã quá hạn 2 ngày')).toBeVisible();
+  expect(screen.getByText('Còn thiếu 750.000 ₫. Chọn hạn mới để tính mức tiết kiệm.')).toBeVisible();
+  expect(screen.queryByText(/NaN/)).toBeNull();
+  expect(screen.getByRole('button', { name: 'Lưu mục tiêu' })).toBeDisabled();
+  await fireEvent.changeText(screen.getByLabelText('Hạn mục tiêu'), '2026-08-11');
+  expect(screen.getByText('25.000 ₫ / ngày')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Lưu mục tiêu' })).toBeEnabled();
+});
+
+it('asks for the full remaining amount when the goal is due today', async () => {
+  const snapshot = createDemoSnapshot(today);
+  snapshot.goal.deadline = today;
+  await render(<PiggyBankScreen initialSnapshot={snapshot} today={today} />);
+  await fireEvent.press(screen.getByRole('button', { name: 'Đặt/Thay đổi mục tiêu' }));
+  expect(screen.getByText('Cần 750.000 ₫ trong hôm nay')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Lưu mục tiêu' })).toBeEnabled();
+});

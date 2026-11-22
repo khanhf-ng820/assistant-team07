@@ -111,7 +111,7 @@ const styles = StyleSheet.create({
   body: { ...type.body, color: colors.muted, textAlign: 'center' },
   caption: { ...type.caption, color: colors.muted },
   pigCard: { backgroundColor: colors.surface, borderRadius: 24, padding: 20, alignItems: 'center', gap: 8, borderWidth: 1, borderColor: colors.border },
-  pig: { width: 112, height: 112, borderRadius: 56, backgroundColor: '#FFE4E6', alignItems: 'center', justifyContent: 'center' },
+  pig: { width: 112, height: 112, borderRadius: 56, backgroundColor: colors.savingsTint, alignItems: 'center', justifyContent: 'center' },
   pigEmoji: { fontSize: 64, lineHeight: 76 },
   saved: { ...type.title, color: colors.savings },
   track: { alignSelf: 'stretch', height: 12, borderRadius: 6, backgroundColor: colors.border, overflow: 'hidden' },

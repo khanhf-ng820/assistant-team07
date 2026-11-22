@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { formatVnd, parseLocalDate, parseVnd, recommendSavings } from '../savings/goal';
+import { formatVnd, parseLocalDate, parseVnd, recommendSavings, type SavingsRecommendation } from '../savings/goal';
 import { colors, type } from '../theme';
 
 export type GoalDraft = { targetVnd: number; deadline: string };
@@ -21,17 +21,19 @@ export function GoalEditorModal({ goal, savedVnd, cashVnd, today, onCancel, onSa
   const [deadline, setDeadline] = useState(goal.deadline);
 
   const targetVnd = parseVnd(targetText);
-  const deadlineDay = parseLocalDate(deadline);
-  const todayDay = parseLocalDate(today);
+  const deadlineValid = parseLocalDate(deadline) !== null;
+  // An existing goal may already be past its deadline: still show its overdue
+  // state, but require a new deadline before saving.
+  const plan =
+    targetVnd !== null && deadlineValid ? recommendSavings({ targetVnd, savedVnd, today, deadline }) : null;
+  const pastDeadline = plan !== null && plan.savingDays < 0;
   const targetError = targetVnd === null ? 'Nhập số tiền mục tiêu hợp lệ (VND).' : null;
-  const deadlineError =
-    deadlineDay === null
-      ? 'Nhập ngày theo dạng YYYY-MM-DD.'
-      : todayDay !== null && deadlineDay < todayDay
-        ? 'Hạn mục tiêu không được trước hôm nay.'
-        : null;
-  const valid = !targetError && !deadlineError;
-  const plan = valid ? recommendSavings({ targetVnd: targetVnd!, savedVnd, today, deadline }) : null;
+  const deadlineError = !deadlineValid
+    ? 'Nhập ngày theo dạng YYYY-MM-DD.'
+    : pastDeadline
+      ? 'Hạn mục tiêu không được trước hôm nay.'
+      : null;
+  const valid = targetVnd !== null && plan !== null && !pastDeadline;
 
   return (
     <Modal testID="goal-editor" visible transparent animationType="slide" onRequestClose={onCancel}>
@@ -80,7 +82,9 @@ export function GoalEditorModal({ goal, savedVnd, cashVnd, today, onCancel, onSa
                 accessibilityLabel="Lưu mục tiêu"
                 accessibilityState={{ disabled: !valid }}
                 disabled={!valid}
-                onPress={() => onSave({ targetVnd: targetVnd!, deadline: deadline.trim() })}
+                onPress={() => {
+                  if (valid) onSave({ targetVnd, deadline: deadline.trim() });
+                }}
                 style={[styles.button, styles.primary, !valid && styles.disabled]}
               >
                 <Text style={styles.primaryText}>Lưu mục tiêu</Text>
@@ -93,25 +97,41 @@ export function GoalEditorModal({ goal, savedVnd, cashVnd, today, onCancel, onSa
   );
 }
 
-function Recommendation({ plan }: { plan: ReturnType<typeof recommendSavings> }) {
+function Recommendation({ plan }: { plan: SavingsRecommendation }) {
   return (
     <View style={styles.recommendation}>
       <Text style={styles.label}>Mức tiết kiệm đề xuất</Text>
-      {plan.status === 'completed' ? (
-        <Text style={styles.value}>Đã đạt mục tiêu</Text>
-      ) : plan.status === 'due_today' ? (
-        <Text style={styles.value}>Cần {formatVnd(plan.remainingVnd)} trong hôm nay</Text>
-      ) : (
-        <>
-          <Text style={styles.value}>{formatVnd(plan.dailyVnd!)} / ngày</Text>
-          <Text style={styles.body}>
-            {formatVnd(plan.thirtyDayVnd!)} / tháng (30 ngày) · còn {plan.savingDays} ngày
-          </Text>
-        </>
-      )}
+      <RecommendationBody plan={plan} />
       <Text style={styles.caption}>Tính từ các giao dịch đã xác nhận</Text>
     </View>
   );
+}
+
+function RecommendationBody({ plan }: { plan: SavingsRecommendation }) {
+  switch (plan.status) {
+    case 'completed':
+      return <Text style={styles.value}>Đã đạt mục tiêu</Text>;
+    case 'overdue':
+      return (
+        <>
+          <Text style={[styles.value, styles.overdue]}>Đã quá hạn {-plan.savingDays} ngày</Text>
+          <Text style={styles.body}>
+            Còn thiếu {formatVnd(plan.remainingVnd)}. Chọn hạn mới để tính mức tiết kiệm.
+          </Text>
+        </>
+      );
+    case 'due_today':
+      return <Text style={styles.value}>Cần {formatVnd(plan.dailyVnd)} trong hôm nay</Text>;
+    case 'on_track':
+      return (
+        <>
+          <Text style={styles.value}>{formatVnd(plan.dailyVnd)} / ngày</Text>
+          <Text style={styles.body}>
+            {formatVnd(plan.thirtyDayVnd)} / tháng (30 ngày) · còn {plan.savingDays} ngày
+          </Text>
+        </>
+      );
+  }
 }
 
 const styles = StyleSheet.create({
@@ -125,7 +145,8 @@ const styles = StyleSheet.create({
   body: { ...type.body, color: colors.text },
   caption: { ...type.caption, color: colors.muted },
   input: { ...type.body, minHeight: 48, borderWidth: 1, borderColor: colors.border, borderRadius: 12, paddingHorizontal: 12, color: colors.text },
-  error: { ...type.caption, color: '#EF4444' },
+  error: { ...type.caption, color: colors.danger },
+  overdue: { color: colors.danger },
   recommendation: { borderLeftWidth: 3, borderLeftColor: colors.savings, paddingLeft: 12, gap: 2, marginTop: 6 },
   actions: { flexDirection: 'row', gap: 12, marginTop: 10 },
   button: { flex: 1, minHeight: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
