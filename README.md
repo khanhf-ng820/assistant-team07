@@ -61,6 +61,8 @@ Run the guided environment wizard [`scripts/setup-carenta-env.sh`](scripts/setup
 ./scripts/setup-carenta-env.sh
 ```
 
+The wizard writes `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and the optional backend-only `SUPABASE_SERVICE_ROLE_KEY` consumed by `services/carenta-api/app/settings.py`, plus `CARENTA_LOCAL_DEV_AUTH` and optional `SUPABASE_JWT_SECRET` for the authentication middleware introduced in Issue #46 (PR #68).
+
 ## Run
 
 Start the API first in a new terminal. From the repository root:

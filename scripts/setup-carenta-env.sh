@@ -207,7 +207,15 @@ banner "CARENTA LAN & Supabase Environment Setup"
 # ── Stage 1: Mobile LAN API URL ───────────────────────────────────────────
 stage "Mobile: LAN Backend URL"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LOCAL_IP=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || true)
+LOCAL_IP=""
+if [[ "${OSTYPE:-}" == darwin* ]]; then
+  LOCAL_IP=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)
+elif command -v hostname >/dev/null 2>&1; then
+  LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+fi
+if [[ ! "$LOCAL_IP" =~ ^[0-9]+(\.[0-9]+){3}$ ]]; then
+  LOCAL_IP=""
+fi
 MOBILE_ENV="$REPO_ROOT/apps/mobile/.env"
 API_ENV="$REPO_ROOT/services/carenta-api/.env"
 ENV_FILE="$MOBILE_ENV"
@@ -231,8 +239,10 @@ stage "Auth Mode Selection"
 say "Choose between Supabase Auth or unauthenticated Local Dev Mode over LAN."
 if ! confirm "Do you have a Supabase project ready to configure?"; then
   ENV_FILE="$API_ENV"
-  # Clear stale Supabase settings so Local Dev Mode guardrail permits opt-in dev auth.
+  # Clear stale Supabase settings so Local Dev Mode guardrail and load_supabase_settings() see a clean disabled state.
   write_env SUPABASE_URL ""
+  write_env SUPABASE_ANON_KEY ""
+  write_env SUPABASE_SERVICE_ROLE_KEY ""
   write_env SUPABASE_JWT_SECRET ""
   write_env CARENTA_LOCAL_DEV_AUTH "true"
   ENV_FILE="$API_ENV and $MOBILE_ENV"
@@ -242,12 +252,12 @@ if ! confirm "Do you have a Supabase project ready to configure?"; then
   return 0
 fi
 
-# ── Stage 3: Supabase Public Keys ─────────────────────────────────────────
-stage "Supabase: Project URL and Anon Key"
-say "We'll open Supabase Dashboard so you can copy public project settings."
+# ── Stage 3: Supabase Public Keys & Backend Service-Role Key ──────────────
+stage "Supabase: Project URL, Anon Key, and Backend Service-Role Key"
+say "We'll open Supabase Dashboard so you can copy project API settings."
 open_url "https://supabase.com/dashboard/projects"
 step "Select your CARENTA project -> Project Settings -> API."
-step "Copy Project URL (https://<ref>.supabase.co) and the anon public key."
+step "Copy Project URL (https://<ref>.supabase.co), anon public key, and service_role secret key."
 ENV_FILE="$MOBILE_ENV"
 while true; do
   ask EXPO_PUBLIC_SUPABASE_URL "Paste Supabase Project URL (https://...):"
@@ -271,6 +281,17 @@ ENV_FILE="$API_ENV"
 write_env SUPABASE_URL "$EXPO_PUBLIC_SUPABASE_URL"
 write_env SUPABASE_ANON_KEY "$EXPO_PUBLIC_SUPABASE_ANON_KEY"
 write_env CARENTA_LOCAL_DEV_AUTH "false"
+say "Backend-only: load_supabase_settings() requires SUPABASE_SERVICE_ROLE_KEY when SUPABASE_URL is set."
+if confirm "Configure backend-only SUPABASE_SERVICE_ROLE_KEY in services/carenta-api/.env now?"; then
+  while true; do
+    ask_secret SUPABASE_SERVICE_ROLE_KEY "Paste Supabase service_role secret key (stored only in backend .env):"
+    if [[ -n "$SUPABASE_SERVICE_ROLE_KEY" ]]; then
+      break
+    fi
+    warn "service_role key cannot be empty when selected."
+  done
+  write_env SUPABASE_SERVICE_ROLE_KEY "$SUPABASE_SERVICE_ROLE_KEY"
+fi
 
 # ── Stage 4: Optional Backend HS256 JWT Secret ────────────────────────────
 stage "Backend: Optional HS256 Fallback Secret"

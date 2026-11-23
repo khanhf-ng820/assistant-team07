@@ -57,3 +57,31 @@ def test_check_contracts_passes_when_aligned_and_raises_on_field_drift():
 
     with pytest.raises(ValueError, match="TypeScript contract missing 'HealthResponse'"):
         _MODULE.check_contracts(fake_openapi, {})
+
+
+def test_find_skipped_schemas_reports_unmatched_openapi_and_ts_contracts(capsys, monkeypatch):
+    fake_openapi = {
+        "paths": {"/health": {"get": {"responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/HealthResponse"}}}}}}}},
+        "components": {
+            "schemas": {
+                "HealthResponse": {"properties": {"status": {}, "service": {}}},
+                "UnmappedApiSchema": {"properties": {"id": {}}},
+            }
+        },
+    }
+    ts_contracts = {
+        "HealthResponse": {"status", "service"},
+        "LocalOnlyTsContract": {"foo"},
+    }
+    skipped_openapi, skipped_ts = _MODULE.find_skipped_schemas(fake_openapi, ts_contracts)
+    assert skipped_openapi == ["UnmappedApiSchema"]
+    assert skipped_ts == ["LocalOnlyTsContract"]
+
+    monkeypatch.setattr(_MODULE, "create_app", lambda: type("FakeApp", (), {"openapi": lambda self: fake_openapi})())
+    monkeypatch.setattr(_MODULE, "load_ts_contracts", lambda: ts_contracts)
+    assert _MODULE.main() == 0
+    captured = capsys.readouterr().out
+    assert "OpenAPI contract check passed (1 schemas: HealthResponse)." in captured
+    assert "Skipped OpenAPI schemas not in TypeScript (1): UnmappedApiSchema" in captured
+    assert "Skipped TypeScript contracts not in OpenAPI (1): LocalOnlyTsContract" in captured
+

@@ -94,13 +94,28 @@ def check_contracts(openapi: dict, ts_contracts: dict[str, set[str]]) -> list[st
     return verified
 
 
-def main() -> int:
-    openapi = create_app().openapi()
+def find_skipped_schemas(openapi: dict, ts_contracts: dict[str, set[str]]) -> tuple[list[str], list[str]]:
+    """Return sorted lists of OpenAPI schemas missing in TS and TS contracts missing in OpenAPI."""
+    schemas = openapi.get("components", {}).get("schemas", {})
+    openapi_names = set(schemas.keys())
+    ts_names = set(ts_contracts.keys())
+    skipped_openapi = sorted(openapi_names - ts_names)
+    skipped_ts = sorted(ts_names - openapi_names)
+    return skipped_openapi, skipped_ts
+
+
+def load_ts_contracts() -> dict[str, set[str]]:
     ts_contracts: dict[str, set[str]] = {}
     for filename in ("health.ts", "contracts.ts"):
         path = MOBILE_API_DIR / filename
         if path.exists():
             ts_contracts.update(parse_ts_contracts(path.read_text(encoding="utf-8")))
+    return ts_contracts
+
+
+def main() -> int:
+    openapi = create_app().openapi()
+    ts_contracts = load_ts_contracts()
 
     try:
         verified = check_contracts(openapi, ts_contracts)
@@ -109,6 +124,11 @@ def main() -> int:
         return 1
 
     print(f"OpenAPI contract check passed ({len(verified)} schemas: {', '.join(verified)}).")
+    skipped_openapi, skipped_ts = find_skipped_schemas(openapi, ts_contracts)
+    if skipped_openapi:
+        print(f"Skipped OpenAPI schemas not in TypeScript ({len(skipped_openapi)}): {', '.join(skipped_openapi)}")
+    if skipped_ts:
+        print(f"Skipped TypeScript contracts not in OpenAPI ({len(skipped_ts)}): {', '.join(skipped_ts)}")
     return 0
 
 
