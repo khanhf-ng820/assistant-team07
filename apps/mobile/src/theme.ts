@@ -1,6 +1,8 @@
 export const colors = {
   primary: '#0F766E',
   savings: '#F43F5E',
+  savingsTint: '#FFE4E6',
+  danger: '#EF4444',
   text: '#0F172A',
   muted: '#475569',
   background: '#F8FAFC',
