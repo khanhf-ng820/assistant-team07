@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLedger } from '../../context/LedgerContext';
 import { colors, type } from '../../theme';
@@ -101,32 +101,23 @@ export function MonthCalendar({
     setActiveYearMonth,
   } = useLedger();
 
-  const [currentYear, setCurrentYear] = useState<number>(activeYear);
-  const [currentMonth, setCurrentMonth] = useState<number>(activeMonth);
-
-  useEffect(() => {
-    setActiveYearMonth(currentYear, currentMonth);
-  }, [currentYear, currentMonth, setActiveYearMonth]);
-
   const handlePrevMonth = () => {
-    if (currentMonth === 1) {
-      setCurrentMonth(12);
-      setCurrentYear((y) => y - 1);
+    if (activeMonth === 1) {
+      setActiveYearMonth(activeYear - 1, 12);
     } else {
-      setCurrentMonth((m) => m - 1);
+      setActiveYearMonth(activeYear, activeMonth - 1);
     }
   };
 
   const handleNextMonth = () => {
-    if (currentMonth === 12) {
-      setCurrentMonth(1);
-      setCurrentYear((y) => y + 1);
+    if (activeMonth === 12) {
+      setActiveYearMonth(activeYear + 1, 1);
     } else {
-      setCurrentMonth((m) => m + 1);
+      setActiveYearMonth(activeYear, activeMonth + 1);
     }
   };
 
-  const calendarCells = buildCalendarMatrix(currentYear, currentMonth, dailySummaries);
+  const calendarCells = buildCalendarMatrix(activeYear, activeMonth, dailySummaries);
 
   const handleDayPress = (cell: CalendarCellData) => {
     if (!cell.isCurrentMonth) return;
@@ -161,13 +152,18 @@ export function MonthCalendar({
       {/* Month Title & Arrow Controls */}
       <View style={styles.monthSelectorRow}>
         <Pressable
-          accessibilityRole="header"
+          accessibilityRole={mode === 'compact' ? 'button' : 'header'}
+          accessibilityLabel={
+            mode === 'compact'
+              ? `Tháng ${activeMonth} năm ${activeYear}. Bấm để xem lịch chi tiết`
+              : `Tháng ${activeMonth} năm ${activeYear}`
+          }
           onPress={mode === 'compact' ? onOpenDetailed : undefined}
           hitSlop={8}
           testID="month-title-pressable"
         >
           <Text style={styles.monthTitleText}>
-            Tháng {currentMonth} năm {currentYear}
+            Tháng {activeMonth} năm {activeYear}
           </Text>
         </Pressable>
 
@@ -219,7 +215,7 @@ export function MonthCalendar({
             <Pressable
               key={cell.dateKey}
               accessibilityRole="button"
-              accessibilityLabel={`Ngày ${cell.dayNumber} tháng ${cell.isCurrentMonth ? currentMonth : 'sau'}, ${cell.amount > 0 ? `${formatVND(cell.amount)}, trạng thái: ${statusText}` : 'chưa có chi tiêu'}`}
+              accessibilityLabel={`Ngày ${cell.dayNumber} tháng ${cell.isCurrentMonth ? activeMonth : 'sau'}, ${cell.amount > 0 ? `${formatVND(cell.amount)}, trạng thái: ${statusText}` : 'chưa có chi tiêu'}`}
               accessibilityState={{ selected: isSelected }}
               onPress={() => handleDayPress(cell)}
               disabled={!cell.isCurrentMonth}

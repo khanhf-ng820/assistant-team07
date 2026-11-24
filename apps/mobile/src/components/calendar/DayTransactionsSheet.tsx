@@ -10,35 +10,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLedger } from '../../context/LedgerContext';
 import { colors, type } from '../../theme';
-import { CATEGORIES, formatVND } from '../../types/transaction';
+import { CATEGORIES, formatVietnameseDate, formatVND } from '../../types/transaction';
 
 interface DayTransactionsSheetProps {
   visible?: boolean;
   onClose?: () => void;
-}
-
-const VI_DAYS = [
-  'Chủ Nhật',
-  'Thứ Hai',
-  'Thứ Ba',
-  'Thứ Tư',
-  'Thứ Năm',
-  'Thứ Sáu',
-  'Thứ Bảy',
-];
-
-function formatVietnameseDate(isoDate: string): string {
-  try {
-    const parts = isoDate.split('-');
-    const year = parseInt(parts[0], 10);
-    const month = parseInt(parts[1], 10);
-    const day = parseInt(parts[2], 10);
-    const dateObj = new Date(year, month - 1, day);
-    const dayOfWeek = VI_DAYS[dateObj.getDay()];
-    return `${dayOfWeek}, ${day} tháng ${month}, ${year}`;
-  } catch {
-    return isoDate;
-  }
 }
 
 export function DayTransactionsSheet({ visible, onClose }: DayTransactionsSheetProps) {

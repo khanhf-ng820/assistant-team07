@@ -154,3 +154,25 @@ export function parseIsoDate(isoDate: string): { year: number; month: number; da
     day: parseInt(parts[2] || '1', 10),
   };
 }
+
+export const VI_DAYS = [
+  'Chủ Nhật',
+  'Thứ Hai',
+  'Thứ Ba',
+  'Thứ Tư',
+  'Thứ Năm',
+  'Thứ Sáu',
+  'Thứ Bảy',
+];
+
+export function formatVietnameseDate(isoDate: string): string {
+  try {
+    const { year, month, day } = parseIsoDate(isoDate);
+    const dateObj = new Date(year, month - 1, day);
+    const dayOfWeek = VI_DAYS[dateObj.getDay()];
+    return `${dayOfWeek}, ${day} tháng ${month}, ${year}`;
+  } catch {
+    return isoDate;
+  }
+}
+

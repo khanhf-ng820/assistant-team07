@@ -11,7 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLedger } from '../../context/LedgerContext';
 import { colors, type } from '../../theme';
-import { CATEGORIES, Category, CategoryId, formatVND } from '../../types/transaction';
+import { CATEGORIES, Category, CategoryId, formatVietnameseDate, formatVND } from '../../types/transaction';
 import { CategoryPickerModal } from './CategoryPickerModal';
 import { VirtualNumpad } from './VirtualNumpad';
 
@@ -46,7 +46,7 @@ export function ManualEntryModal({ visible, onClose }: ManualEntryModalProps) {
   const handleDigitPress = (digit: string) => {
     setValidationError(null);
     setAmountStr((prev) => {
-      if (prev === '0') return digit;
+      if (!prev || prev === '0') return digit;
       if (prev.length >= 9) return prev; // Cap at 999,999,999 VND
       return prev + digit;
     });
@@ -165,8 +165,8 @@ export function ManualEntryModal({ visible, onClose }: ManualEntryModalProps) {
                 ]}
               >
                 {remainingAfterExpense >= 0
-                  ? `Còn ${remainingAfterExpense.toLocaleString('vi-VN')} ₫ sau khoản chi này`
-                  : `Vượt ngân sách ${Math.abs(remainingAfterExpense).toLocaleString('vi-VN')} ₫ sau khoản chi này`}
+                  ? `Còn ${formatVND(remainingAfterExpense)} sau khoản chi này`
+                  : `Vượt ngân sách ${formatVND(Math.abs(remainingAfterExpense))} sau khoản chi này`}
               </Text>
             </View>
 
@@ -236,7 +236,11 @@ export function ManualEntryModal({ visible, onClose }: ManualEntryModalProps) {
             <View style={styles.dateValueGroup}>
               <Text style={styles.calendarIcon}>📅</Text>
               <Text style={styles.dateValueText}>
-                {selectedDate ? `Hôm nay (${selectedDate})` : 'Hôm nay'}
+                {selectedDate
+                  ? selectedDate === '2024-07-10'
+                    ? 'Hôm nay (10 tháng 7, 2024)'
+                    : formatVietnameseDate(selectedDate)
+                  : 'Hôm nay'}
               </Text>
             </View>
           </View>

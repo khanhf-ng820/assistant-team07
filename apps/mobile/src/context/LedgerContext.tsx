@@ -15,7 +15,7 @@ import {
   Transaction,
 } from '../types/transaction';
 
-interface LedgerContextType {
+export interface LedgerDataContextType {
   availableBalance: number;
   isBalanceVisible: boolean;
   toggleBalanceVisibility: () => void;
@@ -31,6 +31,9 @@ interface LedgerContextType {
   getSummaryForDate: (date: string) => DailyExpenseSummary;
   dailyBudgetLimit: number;
   remainingTodayBudget: number;
+}
+
+export interface LedgerUIContextType {
   isDaySheetOpen: boolean;
   openDaySheet: (date?: string) => void;
   closeDaySheet: () => void;
@@ -39,7 +42,10 @@ interface LedgerContextType {
   closeManualEntry: () => void;
 }
 
-const LedgerContext = createContext<LedgerContextType | undefined>(undefined);
+export type LedgerContextType = LedgerDataContextType & LedgerUIContextType;
+
+const LedgerDataContext = createContext<LedgerDataContextType | undefined>(undefined);
+const LedgerUIContext = createContext<LedgerUIContextType | undefined>(undefined);
 
 export function LedgerProvider({ children }: { children: React.ReactNode }) {
   const [availableBalance, setAvailableBalance] = useState<number>(INITIAL_AVAILABLE_BALANCE);
@@ -127,7 +133,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     [dailySummaries, transactions]
   );
 
-  const value = useMemo<LedgerContextType>(() => {
+  const dataValue = useMemo<LedgerDataContextType>(() => {
     return {
       availableBalance,
       isBalanceVisible,
@@ -144,12 +150,6 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
       getSummaryForDate,
       dailyBudgetLimit: INITIAL_DAILY_BUDGET,
       remainingTodayBudget: INITIAL_REMAINING_BUDGET,
-      isDaySheetOpen,
-      openDaySheet,
-      closeDaySheet,
-      isManualEntryOpen,
-      openManualEntry,
-      closeManualEntry,
     };
   }, [
     availableBalance,
@@ -164,6 +164,18 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     monthlySummary,
     dailySummaries,
     getSummaryForDate,
+  ]);
+
+  const uiValue = useMemo<LedgerUIContextType>(() => {
+    return {
+      isDaySheetOpen,
+      openDaySheet,
+      closeDaySheet,
+      isManualEntryOpen,
+      openManualEntry,
+      closeManualEntry,
+    };
+  }, [
     isDaySheetOpen,
     openDaySheet,
     closeDaySheet,
@@ -172,13 +184,31 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     closeManualEntry,
   ]);
 
-  return <LedgerContext.Provider value={value}>{children}</LedgerContext.Provider>;
+  return (
+    <LedgerDataContext.Provider value={dataValue}>
+      <LedgerUIContext.Provider value={uiValue}>{children}</LedgerUIContext.Provider>
+    </LedgerDataContext.Provider>
+  );
+}
+
+export function useLedgerData(): LedgerDataContextType {
+  const context = useContext(LedgerDataContext);
+  if (!context) {
+    throw new Error('useLedgerData must be used within a LedgerProvider');
+  }
+  return context;
+}
+
+export function useLedgerUI(): LedgerUIContextType {
+  const context = useContext(LedgerUIContext);
+  if (!context) {
+    throw new Error('useLedgerUI must be used within a LedgerProvider');
+  }
+  return context;
 }
 
 export function useLedger(): LedgerContextType {
-  const context = useContext(LedgerContext);
-  if (!context) {
-    throw new Error('useLedger must be used within a LedgerProvider');
-  }
-  return context;
+  const data = useLedgerData();
+  const ui = useLedgerUI();
+  return useMemo(() => ({ ...data, ...ui }), [data, ui]);
 }

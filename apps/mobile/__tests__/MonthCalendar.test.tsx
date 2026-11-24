@@ -61,6 +61,30 @@ describe('MonthCalendar', () => {
     expect(screen.getByText('Tháng 6 năm 2024')).toBeTruthy();
   });
 
+  it('navigates across year boundaries (December to January)', async () => {
+    await render(
+      <LedgerProvider>
+        <MonthCalendar mode="compact" />
+      </LedgerProvider>
+    );
+
+    const nextButton = screen.getByTestId('next-month-button');
+    // From July 2024 to December 2024 (5 clicks)
+    for (let i = 0; i < 5; i++) {
+      await fireEvent.press(nextButton);
+    }
+    expect(screen.getByText('Tháng 12 năm 2024')).toBeTruthy();
+
+    // Next click navigates to January 2025
+    await fireEvent.press(nextButton);
+    expect(screen.getByText('Tháng 1 năm 2025')).toBeTruthy();
+
+    // Previous click navigates back to December 2024
+    const prevButton = screen.getByTestId('prev-month-button');
+    await fireEvent.press(prevButton);
+    expect(screen.getByText('Tháng 12 năm 2024')).toBeTruthy();
+  });
+
   it('handles selecting a date cell and calling back button in detailed mode', async () => {
     const onBackPress = jest.fn();
 

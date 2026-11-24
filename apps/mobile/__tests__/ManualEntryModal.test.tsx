@@ -58,4 +58,41 @@ describe('ManualEntryModal', () => {
 
     expect(onClose).toHaveBeenCalled();
   });
+
+  it('shows validation error and prevents submission when amount is 0', async () => {
+    const onClose = jest.fn();
+
+    await render(
+      <LedgerProvider>
+        <ManualEntryModal visible onClose={onClose} />
+      </LedgerProvider>
+    );
+
+    // Delete all digits until amount is 0
+    for (let i = 0; i < 6; i++) {
+      await fireEvent.press(screen.getByTestId('numpad-key-delete'));
+    }
+
+    expect(screen.getByTestId('amount-display-value')).toHaveTextContent('0');
+
+    // Attempt to submit with 0 VND
+    await fireEvent.press(screen.getByTestId('submit-expense-button'));
+
+    expect(screen.getByText('Vui lòng nhập số tiền lớn hơn 0')).toBeTruthy();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('allows opening category picker and selecting a category', async () => {
+    await render(
+      <LedgerProvider>
+        <ManualEntryModal visible />
+      </LedgerProvider>
+    );
+
+    await fireEvent.press(screen.getByTestId('category-selector-button'));
+    expect(screen.getByText('Chọn danh mục chi tiêu')).toBeTruthy();
+
+    await fireEvent.press(screen.getByTestId('category-option-shopping'));
+    expect(screen.getByTestId('selected-category-name')).toHaveTextContent('Mua sắm');
+  });
 });
