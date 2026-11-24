@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -8,11 +9,14 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Button } from './Button';
 import { colors, radius, shadows, spacing, typography } from '../theme';
 
 export interface CaptureChooserProps {
   visible: boolean;
   onClose: () => void;
+  onSelectManual?: () => void;
+  onSelectMethod?: (method: string) => void;
 }
 
 interface ActionOption {
@@ -27,7 +31,12 @@ const ACTION_OPTIONS: ActionOption[] = [
   { method: 'Ghi âm', icon: '🎙️', description: 'Nói khoản chi bằng giọng nói' },
 ];
 
-export function CaptureChooser({ visible, onClose }: CaptureChooserProps) {
+export function CaptureChooser({
+  visible,
+  onClose,
+  onSelectManual,
+  onSelectMethod,
+}: CaptureChooserProps) {
   return (
     <Modal
       testID="capture-modal"
@@ -63,40 +72,51 @@ export function CaptureChooser({ visible, onClose }: CaptureChooserProps) {
             </View>
 
             <View style={styles.optionsList}>
-              {ACTION_OPTIONS.map(({ method, icon, description }) => (
-                <Pressable
-                  key={method}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${method} — Chưa triển khai`}
-                  accessibilityState={{ disabled: true }}
-                  disabled
-                  style={styles.option}
-                >
-                  <View style={styles.iconCircle}>
-                    <Text style={styles.iconText}>{icon}</Text>
-                  </View>
-                  <View style={styles.optionContent}>
-                    <Text style={styles.methodTitle}>{method}</Text>
-                    <Text style={styles.optionDescription}>{description}</Text>
-                  </View>
-                  <View style={styles.badge}>
-                    <Text style={styles.badgeText}>Chưa triển khai</Text>
-                  </View>
-                </Pressable>
-              ))}
+              {ACTION_OPTIONS.map(({ method, icon, description }) => {
+                const isManual = method === 'Nhập thủ công';
+                const isEnabled = isManual && Boolean(onSelectManual);
+                const label = isEnabled ? method : `${method} — Chưa triển khai`;
+
+                return (
+                  <Pressable
+                    key={method}
+                    accessibilityRole="button"
+                    accessibilityLabel={label}
+                    accessibilityState={{ disabled: !isEnabled }}
+                    disabled={!isEnabled}
+                    style={[styles.option, isEnabled && styles.optionEnabled]}
+                    onPress={() => {
+                      if (isEnabled) {
+                        onClose();
+                        onSelectManual?.();
+                        onSelectMethod?.(method);
+                      }
+                    }}
+                  >
+                    <View style={styles.iconCircle}>
+                      <Text style={styles.iconText}>{icon}</Text>
+                    </View>
+                    <View style={styles.optionContent}>
+                      <Text style={styles.methodTitle}>{method}</Text>
+                      <Text style={styles.optionDescription}>{description}</Text>
+                    </View>
+                    <View style={[styles.badge, isEnabled && styles.badgeEnabled]}>
+                      <Text style={[styles.badgeText, isEnabled && styles.badgeTextEnabled]}>
+                        {isEnabled ? 'Sẵn sàng' : 'Chưa triển khai'}
+                      </Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
             </View>
 
-            <Pressable
-              accessibilityRole="button"
+            <Button
+              title="Đóng"
+              variant="primary"
               accessibilityLabel="Đóng lựa chọn"
               onPress={onClose}
-              style={({ pressed }) => [
-                styles.closeButton,
-                pressed && styles.closePressed,
-              ]}
-            >
-              <Text style={styles.closeText}>Đóng</Text>
-            </Pressable>
+              style={styles.closeButton}
+            />
           </View>
         </ScrollView>
       </SafeAreaView>
@@ -110,6 +130,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.overlay,
     padding: spacing.xl,
     justifyContent: 'center',
+    // Platform web blur backdrop filter; native platforms use translucent dimmed scrim colors.overlay
+    ...Platform.select({
+      web: {
+        backdropFilter: 'blur(16px)',
+        WebkitBackdropFilter: 'blur(16px)',
+      },
+    }),
   },
   scrollContent: {
     flexGrow: 1,
@@ -147,6 +174,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
     opacity: 0.75,
   },
+  optionEnabled: {
+    opacity: 1,
+    borderColor: colors.primary,
+    backgroundColor: colors.surface,
+  },
   iconCircle: {
     width: 44,
     height: 44,
@@ -178,26 +210,22 @@ const styles = StyleSheet.create({
     borderRadius: radius.xs,
     backgroundColor: colors.border,
   },
+  badgeEnabled: {
+    backgroundColor: colors.primaryLight,
+  },
   badgeText: {
     ...typography.caption,
     fontSize: 11,
     color: colors.muted,
     fontWeight: '500',
   },
+  badgeTextEnabled: {
+    color: colors.primaryDark,
+    fontWeight: '600',
+  },
   closeButton: {
-    minHeight: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.primary,
-    borderRadius: radius.md,
     marginTop: spacing.xs,
-  },
-  closePressed: {
-    opacity: 0.88,
-  },
-  closeText: {
-    ...typography.bodyBold,
-    color: colors.surface,
+    width: '100%',
   },
 });
 

@@ -24,6 +24,9 @@ export interface ButtonProps {
   testID?: string;
 }
 
+export type ButtonSize = NonNullable<ButtonProps['size']>;
+export type ButtonVariant = NonNullable<ButtonProps['variant']>;
+
 export function Button({
   title,
   onPress,
@@ -40,14 +43,14 @@ export function Button({
   const isInteractive = !disabled && !loading;
 
   // Sizing maps (maintaining >= 48dp touch target)
-  const sizeStyles: Record<string, ViewStyle> = {
+  const sizeStyles: Record<ButtonSize, ViewStyle> = {
     sm: { minHeight: 48, paddingVertical: spacing.sm, paddingHorizontal: spacing.md },
     md: { minHeight: 48, paddingVertical: spacing.md, paddingHorizontal: spacing.lg },
     lg: { minHeight: 56, paddingVertical: spacing.md, paddingHorizontal: spacing.xl },
   };
 
   // Backgrounds & borders by variant
-  const variantStyles: Record<string, ViewStyle> = {
+  const variantStyles: Record<ButtonVariant, ViewStyle> = {
     primary: { backgroundColor: colors.primary, borderWidth: 0 },
     secondary: { backgroundColor: colors.surfaceAlt, borderWidth: 0 },
     savings: { backgroundColor: colors.savings, borderWidth: 0 },
@@ -57,7 +60,7 @@ export function Button({
   };
 
   // Text color by variant
-  const textColors: Record<string, string> = {
+  const textColors: Record<ButtonVariant, string> = {
     primary: colors.surface,
     secondary: colors.text,
     savings: colors.surface,

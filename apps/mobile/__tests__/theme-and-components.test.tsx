@@ -3,6 +3,7 @@ import { Text } from 'react-native';
 import { fireEvent, render, screen } from '@testing-library/react-native';
 import { Button } from '../src/components/Button';
 import { Card } from '../src/components/Card';
+import { CaptureChooser } from '../src/components/CaptureChooser';
 import { Header } from '../src/components/Header';
 import { Toast } from '../src/components/Toast';
 import { colors, radius, shadows, spacing, theme, typography } from '../src/theme';
@@ -12,6 +13,7 @@ describe('Theme and Figma Design Tokens', () => {
     expect(colors.primary).toBe('#0F766E');
     expect(colors.blue).toBe('#2563EB');
     expect(colors.savings).toBe('#F43F5E');
+    expect(colors.savingsTint).toBe('#FFE4E6');
     expect(colors.coral).toBe('#F43F5E');
     expect(colors.warning).toBe('#F59E0B');
     expect(colors.danger).toBe('#EF4444');
@@ -102,7 +104,7 @@ describe('Header Component', () => {
 });
 
 describe('Toast Component', () => {
-  it('renders message when visible and triggers onDismiss', async () => {
+  it('renders message when visible and triggers onDismiss with accessible close target', async () => {
     const onDismiss = jest.fn();
     await render(
       <Toast
@@ -113,12 +115,72 @@ describe('Toast Component', () => {
       />
     );
     expect(screen.getByText('Giao dịch đã lưu thành công')).toBeDefined();
-    await fireEvent.press(screen.getByRole('button', { name: 'Đóng thông báo' }));
+    const closeBtn = screen.getByRole('button', { name: 'Đóng thông báo' });
+    expect(closeBtn).toBeDefined();
+    await fireEvent.press(closeBtn);
     expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 
   it('renders nothing when not visible', async () => {
     await render(<Toast visible={false} message="Ẩn" />);
     expect(screen.queryByText('Ẩn')).toBeNull();
+  });
+
+  it('auto-dismisses after duration with fake timers', async () => {
+    jest.useFakeTimers();
+    try {
+      const onDismiss = jest.fn();
+      await render(
+        <Toast
+          visible
+          message="Tự biến mất"
+          duration={2000}
+          onDismiss={onDismiss}
+        />
+      );
+      expect(onDismiss).not.toHaveBeenCalled();
+      jest.advanceTimersByTime(2000);
+      expect(onDismiss).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('does not auto-dismiss when duration is 0', async () => {
+    jest.useFakeTimers();
+    try {
+      const onDismiss = jest.fn();
+      await render(
+        <Toast
+          visible
+          message="Không tự tắt"
+          duration={0}
+          onDismiss={onDismiss}
+        />
+      );
+      jest.advanceTimersByTime(5000);
+      expect(onDismiss).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
+describe('CaptureChooser Integration', () => {
+  it('activates manual entry option when onSelectManual is provided', async () => {
+    const onClose = jest.fn();
+    const onSelectManual = jest.fn();
+    await render(
+      <CaptureChooser
+        visible
+        onClose={onClose}
+        onSelectManual={onSelectManual}
+      />
+    );
+    const manualBtn = screen.getByRole('button', { name: 'Nhập thủ công' });
+    expect(manualBtn).toBeEnabled();
+    await fireEvent.press(manualBtn);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onSelectManual).toHaveBeenCalledTimes(1);
   });
 });

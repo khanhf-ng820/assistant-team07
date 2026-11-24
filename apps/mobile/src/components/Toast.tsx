@@ -80,6 +80,7 @@ export function Toast({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Đóng thông báo"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           onPress={onDismiss}
           style={styles.closeButton}
         >
@@ -127,8 +128,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   closeButton: {
-    width: 32,
-    height: 32,
+    minWidth: 48,
+    minHeight: 48,
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -7,9 +7,12 @@ import { colors, radius, shadows, spacing, typography } from '../../src/theme';
 function TemplateTabBar({ state, descriptors, emitter, navigateToTab, insets }: BottomTabBarProps) {
   const [captureOpen, setCaptureOpen] = useState(false);
 
-  // Identify routes
-  const statsRoute = state.routes.find((r) => r.name === 'index') ?? state.routes[0];
-  const savingsRoute = state.routes.find((r) => r.name === 'savings') ?? state.routes[1];
+  // Identify routes dynamically
+  const statsIndex = state.routes.findIndex((r) => r.name === 'index');
+  const savingsIndex = state.routes.findIndex((r) => r.name === 'savings');
+
+  const statsRoute = statsIndex >= 0 ? state.routes[statsIndex] : state.routes[0];
+  const savingsRoute = savingsIndex >= 0 ? state.routes[savingsIndex] : state.routes[1];
 
   const renderTab = (route: typeof statsRoute, index: number) => {
     if (!route) return null;
@@ -53,8 +56,7 @@ function TemplateTabBar({ state, descriptors, emitter, navigateToTab, insets }: 
         style={[
           styles.bar,
           {
-            paddingBottom: Math.max(insets.bottom, 12),
-            height: 84 + insets.bottom,
+            paddingBottom: Math.max(insets.bottom, 8),
           },
         ]}
         accessibilityElementsHidden={captureOpen}
@@ -62,7 +64,7 @@ function TemplateTabBar({ state, descriptors, emitter, navigateToTab, insets }: 
       >
         {/* Slot 1: Thống kê */}
         <View style={styles.tabSlot}>
-          {renderTab(statsRoute, 0)}
+          {renderTab(statsRoute, statsIndex >= 0 ? statsIndex : 0)}
         </View>
 
         {/* Slot 2: Floating 56x56 + Button raised 12px */}
@@ -83,7 +85,7 @@ function TemplateTabBar({ state, descriptors, emitter, navigateToTab, insets }: 
 
         {/* Slot 3: Tiết kiệm */}
         <View style={styles.tabSlot}>
-          {renderTab(savingsRoute, 1)}
+          {renderTab(savingsRoute, savingsIndex >= 0 ? savingsIndex : 1)}
         </View>
       </View>
 
@@ -106,6 +108,7 @@ export default function TabsLayout() {
 
 const styles = StyleSheet.create({
   bar: {
+    height: 84, // Fixed reference bar height 84 including safe area per docs/carenta-implementation-plan.md §4
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -122,7 +125,7 @@ const styles = StyleSheet.create({
   },
   tab: {
     width: '100%',
-    minHeight: 52,
+    minHeight: 48,
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: spacing.xs,

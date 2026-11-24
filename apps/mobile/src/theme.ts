@@ -1,24 +1,23 @@
 import { Platform } from 'react-native';
 
 export const fontFamilies = {
-  heading: Platform.select({ ios: 'SF Pro Display', default: 'Inter' }),
-  body: Platform.select({ ios: 'SF Pro Display', default: 'Inter' }),
+  // On iOS, 'System' uses SF Pro Display / Text natively.
+  // On Android/Web, fallback gracefully to Inter / system sans-serif.
+  heading: Platform.select({ ios: 'System', default: 'Inter' }),
+  body: Platform.select({ ios: 'System', default: 'Inter' }),
 };
 
 export const colors = {
-  // Brand & Core
+  // Canonical Brand & Core Tokens (Figma Design System)
   primary: '#0F766E', // Primary Teal
   primaryDark: '#115E59',
   primaryLight: '#CCFBF1',
   blue: '#2563EB', // Blue Accent
   savings: '#F43F5E', // Piggy Coral Accent
-  coral: '#F43F5E',
+  savingsTint: '#FFE4E6', // Coral Light Tint (from main / PR #62)
   emerald: '#10B981', // Success Emerald
-  success: '#10B981',
   amber: '#F59E0B', // Warning Amber
-  warning: '#F59E0B',
   danger: '#EF4444', // Danger Alert Red
-  error: '#EF4444',
 
   // Surfaces & Backgrounds
   background: '#F8FAFC',
@@ -36,6 +35,12 @@ export const colors = {
   // Overlays
   overlay: 'rgba(15, 23, 42, 0.65)',
   overlayLight: 'rgba(255, 255, 255, 0.85)',
+
+  // Semantic & Backward-Compatibility Aliases
+  coral: '#F43F5E', // Alias for savings
+  success: '#10B981', // Alias for emerald
+  warning: '#F59E0B', // Alias for amber
+  error: '#EF4444', // Alias for danger
 };
 
 export const spacing = {
