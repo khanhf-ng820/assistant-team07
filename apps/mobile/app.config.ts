@@ -9,7 +9,8 @@ const config: ExpoConfig = {
   userInterfaceStyle: 'light',
   platforms: ['android', 'ios'],
   icon: './assets/icon.png',
-  plugins: ['expo-router'],
+  android: { package: 'com.carenta.app' },
+  plugins: ['expo-router', './plugins/withCaptureShortcuts'],
 };
 
 export default config;
