@@ -120,13 +120,12 @@ export const CATEGORIES: Record<CategoryId, Category> = {
 };
 
 /**
- * Standardizes currency formatting according to project guidelines:
- * - 45000 -> "45.000 đ"
- * - 4500000 -> "4.500.000 VNĐ" (or "4.500.000đ")
+ * Standardizes currency formatting according to project guidelines (carenta-implementation-plan §4 line 118):
+ * - Always formats with a space and dong symbol: "45.000 ₫", "4.500.000 ₫"
  */
-export function formatVND(amount: number, useVNDText: boolean = false): string {
+export function formatVND(amount: number): string {
   const formatted = amount.toLocaleString('vi-VN');
-  return useVNDText ? `${formatted} VNĐ` : `${formatted}đ`;
+  return `${formatted} ₫`;
 }
 
 /**
@@ -136,4 +135,22 @@ export function formatCompactK(amount: number): string {
   if (amount <= 0) return '';
   const thousands = Math.round(amount / 1000);
   return `${thousands}k`;
+}
+
+/**
+ * Shared ISO date helpers (YYYY-MM-DD)
+ */
+export function formatIsoDate(year: number, month: number, day: number): string {
+  const m = month.toString().padStart(2, '0');
+  const d = day.toString().padStart(2, '0');
+  return `${year}-${m}-${d}`;
+}
+
+export function parseIsoDate(isoDate: string): { year: number; month: number; day: number } {
+  const parts = isoDate.split('-');
+  return {
+    year: parseInt(parts[0] || '2024', 10),
+    month: parseInt(parts[1] || '7', 10),
+    day: parseInt(parts[2] || '1', 10),
+  };
 }

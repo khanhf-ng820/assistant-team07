@@ -37,3 +37,16 @@ it.each(['Thống kê', 'Tiết kiệm'])('opens and closes the same chooser fro
   expect(screen.queryByText('Chọn cách ghi giao dịch')).toBeNull();
   expect(screen.getByRole('tab', { name: tab })).toBeSelected();
 });
+
+it('opens ManualEntryModal when selecting Nhập thủ công from Tiết kiệm tab', async () => {
+  await renderRouter(routes, { initialUrl: '/savings' });
+  expect(screen.getByRole('tab', { name: 'Tiết kiệm' })).toBeSelected();
+  await fireEvent.press(screen.getByRole('button', { name: 'Thêm giao dịch' }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Nhập thủ công' }));
+
+  // Verifies ManualEntryModal mounted at root layout opens successfully from Tiết kiệm tab
+  expect(screen.getByText('Thêm khoản chi')).toBeVisible();
+  expect(screen.getByTestId('remaining-budget-badge')).toBeTruthy();
+  await fireEvent.press(screen.getByTestId('manual-entry-back'));
+  expect(screen.queryByText('Thêm khoản chi')).toBeNull();
+});

@@ -2,10 +2,8 @@ import { useRouter } from 'expo-router';
 import React from 'react';
 import { ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { DayTransactionsSheet } from '../src/components/calendar/DayTransactionsSheet';
 import { MonthCalendar } from '../src/components/calendar/MonthCalendar';
 import { MonthlyBudgetSummaryCard } from '../src/components/dashboard/MonthlyBudgetSummaryCard';
-import { ManualEntryModal } from '../src/components/manual-entry/ManualEntryModal';
 import { colors } from '../src/theme';
 
 export default function CalendarDetailScreen() {
@@ -26,12 +24,6 @@ export default function CalendarDetailScreen() {
         {/* Monthly Budget Summary */}
         <MonthlyBudgetSummaryCard />
       </ScrollView>
-
-      {/* Selected Day Transaction Sheet */}
-      <DayTransactionsSheet />
-
-      {/* Manual Expense Entry Modal */}
-      <ManualEntryModal />
     </SafeAreaView>
   );
 }

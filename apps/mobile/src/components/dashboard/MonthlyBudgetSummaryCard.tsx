@@ -9,15 +9,19 @@ export function MonthlyBudgetSummaryCard() {
 
   return (
     <View style={styles.card} testID="monthly-budget-summary-card">
-      {/* Row 1: Header with ratio */}
+      {/* Row 1: Monthly adherence metric (carenta-implementation-plan §4 line 123) */}
       <View style={styles.row}>
-        <Text style={styles.title}>Ngân sách tháng</Text>
-        <Text style={styles.highlightTeal} testID="days-within-ratio">
-          {monthlySummary.daysWithinBudget} / {monthlySummary.daysEvaluated} ngày
+        <Text style={styles.title}>Ngày trong hạn mức</Text>
+        <Text
+          style={styles.highlightTeal}
+          testID="days-within-ratio"
+          accessibilityLabel={`Ngày trong hạn mức: ${monthlySummary.daysWithinBudget}/${monthlySummary.daysEvaluated} ngày đã đánh giá`}
+        >
+          {monthlySummary.daysWithinBudget}/{monthlySummary.daysEvaluated} ngày đã đánh giá
         </Text>
       </View>
 
-      {/* Row 2: Total Spent */}
+      {/* Row 2: Total Spent (derived dynamically from calendar aggregation) */}
       <View style={styles.row}>
         <Text style={styles.label}>Tổng chi tiêu</Text>
         <Text style={styles.amountValue} testID="monthly-total-spent">
@@ -55,12 +59,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 8,
   },
   title: {
     ...type.bodyBold,
     color: colors.text,
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
+    flexShrink: 0,
   },
   label: {
     ...type.body,
@@ -70,8 +76,9 @@ const styles = StyleSheet.create({
   highlightTeal: {
     ...type.bodyBold,
     color: colors.primary,
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
+    textAlign: 'right',
   },
   amountValue: {
     ...type.bodyBold,

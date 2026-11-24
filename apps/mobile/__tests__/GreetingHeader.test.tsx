@@ -13,8 +13,8 @@ describe('GreetingHeader', () => {
 
     expect(screen.getByText('Xin chào, Minh!')).toBeTruthy();
     expect(screen.getByText('Từng bước nhỏ. Thêm tự do.')).toBeTruthy();
-    expect(screen.getByText('Tổng số dư khả dụng')).toBeTruthy();
-    expect(screen.getByTestId('balance-amount-display')).toHaveTextContent('4.500.000 VNĐ');
+    expect(screen.getByText('Tổng số dư ghi nhận')).toBeTruthy();
+    expect(screen.getByTestId('balance-amount-display')).toHaveTextContent('4.500.000 ₫');
     expect(screen.getByText('Bạn đang chi tiêu rất hợp lý')).toBeTruthy();
   });
 
@@ -28,15 +28,15 @@ describe('GreetingHeader', () => {
     const eyeButton = screen.getByTestId('toggle-balance-visibility');
 
     // Initially visible
-    expect(screen.getByTestId('balance-amount-display')).toHaveTextContent('4.500.000 VNĐ');
+    expect(screen.getByTestId('balance-amount-display')).toHaveTextContent('4.500.000 ₫');
 
     // Press to hide
     await fireEvent.press(eyeButton);
-    expect(screen.getByTestId('balance-amount-display')).toHaveTextContent('•••••••• VNĐ');
+    expect(screen.getByTestId('balance-amount-display')).toHaveTextContent('•••••••• ₫');
 
     // Press to unhide
     await fireEvent.press(eyeButton);
-    expect(screen.getByTestId('balance-amount-display')).toHaveTextContent('4.500.000 VNĐ');
+    expect(screen.getByTestId('balance-amount-display')).toHaveTextContent('4.500.000 ₫');
   });
 
   it('calls onWalletPress when wallet button is tapped', async () => {

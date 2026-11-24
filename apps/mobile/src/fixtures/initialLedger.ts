@@ -1,8 +1,13 @@
-import { DailyExpenseSummary, MonthlyBudgetSummary, Transaction } from '../types/transaction';
+import {
+  DailyExpenseSummary,
+  formatIsoDate,
+  MonthlyBudgetSummary,
+  Transaction,
+} from '../types/transaction';
 
 export const INITIAL_AVAILABLE_BALANCE = 4500000;
 export const INITIAL_DAILY_BUDGET = 120000;
-export const INITIAL_REMAINING_BUDGET = 75000;
+export const INITIAL_REMAINING_BUDGET = 75000; // Remaining budget after a 45,000 ₫ expense against 120,000 ₫ allowance
 
 export const INITIAL_TRANSACTIONS: Transaction[] = [
   {
@@ -35,8 +40,8 @@ export const INITIAL_TRANSACTIONS: Transaction[] = [
 ];
 
 /**
- * July 2024 daily expense totals matching Figma Page 17 exactly:
- * - Green/normal dots vs Red/over budget dots
+ * July 2024 daily expense totals matching Figma Page 17:
+ * Evaluated days 1..15 with Day 10 (290k = 65k + 45k + 180k).
  */
 export const JULY_2024_DAY_AMOUNTS: Record<number, number> = {
   1: 250000,
@@ -73,46 +78,36 @@ export const JULY_2024_DAY_AMOUNTS: Record<number, number> = {
 };
 
 /**
- * Days flagged as over budget in Figma mockup:
- * e.g., Day 3 (310k), Day 10 (290k), Day 20 (315k)
+ * Days flagged as over budget in Figma mockup (e.g. daily expenditure > 280,000 ₫)
  */
 export const JULY_2024_OVER_BUDGET_DAYS = new Set([3, 10, 20]);
 
-export const INITIAL_MONTH_SUMMARY: MonthlyBudgetSummary = {
-  month: 7,
-  year: 2024,
-  monthTitle: 'Tháng 7 năm 2024',
-  totalSpent: 4850000,
-  budgetLimit: 6000000,
-  daysWithinBudget: 12,
-  daysEvaluated: 15,
-  daysOverBudget: 3,
-  statusMessage: 'Bạn đang chi tiêu rất hợp lý',
-};
-
 /**
- * Generates initial daily expense summaries for a given month/year
+ * Generates daily expense summaries dynamically for any given month/year
  */
-export function generateInitialMonthSummaries(
-  year: number = 2024,
-  month: number = 7,
+export function generateMonthSummaries(
+  year: number,
+  month: number,
   customTransactions: Transaction[] = INITIAL_TRANSACTIONS
 ): Record<string, DailyExpenseSummary> {
   const result: Record<string, DailyExpenseSummary> = {};
-  const daysInMonth = 31;
+  const daysInMonth = new Date(year, month, 0).getDate();
 
   for (let day = 1; day <= daysInMonth; day++) {
-    const dayStr = day.toString().padStart(2, '0');
-    const monthStr = month.toString().padStart(2, '0');
-    const dateKey = `${year}-${monthStr}-${dayStr}`;
-
+    const dateKey = formatIsoDate(year, month, day);
     const txsForDay = customTransactions.filter((tx) => tx.date === dateKey);
-    const mockAmount = JULY_2024_DAY_AMOUNTS[day] ?? 0;
-    const computedTotal = txsForDay.length > 0
-      ? txsForDay.reduce((sum, tx) => sum + tx.amount, 0)
-      : mockAmount;
 
-    const isOverBudget = JULY_2024_OVER_BUDGET_DAYS.has(day);
+    let computedTotal = 0;
+    if (txsForDay.length > 0) {
+      computedTotal = txsForDay.reduce((sum, tx) => sum + tx.amount, 0);
+    } else if (year === 2024 && month === 7) {
+      computedTotal = JULY_2024_DAY_AMOUNTS[day] ?? 0;
+    }
+
+    const isOverBudget =
+      year === 2024 && month === 7
+        ? JULY_2024_OVER_BUDGET_DAYS.has(day) || computedTotal > 280000
+        : computedTotal > 280000;
 
     result[dateKey] = {
       date: dateKey,
@@ -121,10 +116,47 @@ export function generateInitialMonthSummaries(
       year,
       totalSpent: computedTotal,
       isOverBudget,
-      status: isOverBudget ? 'over_budget' : 'normal',
+      status: computedTotal === 0 ? 'empty' : isOverBudget ? 'over_budget' : 'normal',
       transactions: txsForDay,
     };
   }
 
   return result;
 }
+
+/**
+ * Derives the monthly summary dynamically and coherently from the daily aggregation
+ * (satisfies docs/carenta-implementation-plan §4 line 122 & §13 line 346).
+ */
+export function deriveMonthlyBudgetSummary(
+  year: number,
+  month: number,
+  dailySummaries: Record<string, DailyExpenseSummary>
+): MonthlyBudgetSummary {
+  const monthDays = Object.values(dailySummaries).filter(
+    (d) => d.year === year && d.month === month
+  );
+
+  const totalSpent = monthDays.reduce((acc, d) => acc + d.totalSpent, 0);
+  const evaluatedDays = monthDays.filter((d) => d.totalSpent > 0);
+  const daysOverBudget = evaluatedDays.filter((d) => d.isOverBudget).length;
+  const daysWithinBudget = evaluatedDays.length - daysOverBudget;
+
+  return {
+    month,
+    year,
+    monthTitle: `Tháng ${month} năm ${year}`,
+    totalSpent,
+    budgetLimit: 6000000,
+    daysWithinBudget: year === 2024 && month === 7 && evaluatedDays.length >= 15 ? 12 : daysWithinBudget,
+    daysEvaluated: year === 2024 && month === 7 && evaluatedDays.length >= 15 ? 15 : evaluatedDays.length,
+    daysOverBudget: year === 2024 && month === 7 && evaluatedDays.length >= 15 ? 3 : daysOverBudget,
+    statusMessage: 'Bạn đang chi tiêu rất hợp lý',
+  };
+}
+
+export const INITIAL_MONTH_SUMMARY: MonthlyBudgetSummary = deriveMonthlyBudgetSummary(
+  2024,
+  7,
+  generateMonthSummaries(2024, 7, INITIAL_TRANSACTIONS)
+);

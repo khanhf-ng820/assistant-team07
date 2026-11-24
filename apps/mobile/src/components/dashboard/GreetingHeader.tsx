@@ -30,6 +30,7 @@ export function GreetingHeader({
           accessibilityRole="button"
           accessibilityLabel="Ví tài chính"
           onPress={onWalletPress}
+          hitSlop={8}
           style={({ pressed }) => [styles.walletButton, pressed && styles.pressed]}
           testID="wallet-button"
         >
@@ -37,10 +38,10 @@ export function GreetingHeader({
         </Pressable>
       </View>
 
-      {/* Available Balance Card */}
+      {/* Recorded Balance Card (labeled 'Tổng số dư ghi nhận' per carenta-implementation-plan §4 line 119) */}
       <View style={styles.balanceCard}>
         <View style={styles.cardHeaderRow}>
-          <Text style={styles.balanceLabel}>Tổng số dư khả dụng</Text>
+          <Text style={styles.balanceLabel}>Tổng số dư ghi nhận</Text>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={isBalanceVisible ? 'Ẩn số dư' : 'Hiện số dư'}
@@ -56,9 +57,9 @@ export function GreetingHeader({
         <Text
           style={styles.balanceAmount}
           testID="balance-amount-display"
-          accessibilityLabel={`Số dư: ${isBalanceVisible ? formatVND(availableBalance, true) : 'Đã ẩn'}`}
+          accessibilityLabel={`Số dư: ${isBalanceVisible ? formatVND(availableBalance) : 'Đã ẩn'}`}
         >
-          {isBalanceVisible ? formatVND(availableBalance, true) : '•••••••• VNĐ'}
+          {isBalanceVisible ? formatVND(availableBalance) : '•••••••• ₫'}
         </Text>
 
         {/* Status Message Badge */}
@@ -102,8 +103,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   walletButton: {
-    width: 44,
-    height: 44,
+    minWidth: 48,
+    minHeight: 48,
+    width: 48,
+    height: 48,
     borderRadius: 14,
     backgroundColor: '#F0FDFA',
     borderWidth: 1,
@@ -112,7 +115,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   walletIcon: {
-    fontSize: 20,
+    fontSize: 22,
   },
   balanceCard: {
     backgroundColor: colors.surface,
@@ -138,10 +141,15 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   eyeButton: {
-    padding: 4,
+    minWidth: 48,
+    minHeight: 48,
+    width: 48,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   eyeIcon: {
-    fontSize: 18,
+    fontSize: 20,
   },
   balanceAmount: {
     ...type.amountHero,

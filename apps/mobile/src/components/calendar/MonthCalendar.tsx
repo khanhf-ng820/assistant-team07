@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLedger } from '../../context/LedgerContext';
 import { colors, type } from '../../theme';
-import { formatCompactK } from '../../types/transaction';
+import { formatCompactK, formatIsoDate, formatVND } from '../../types/transaction';
 
 interface MonthCalendarProps {
   mode?: 'compact' | 'detailed';
@@ -12,7 +12,7 @@ interface MonthCalendarProps {
 
 const WEEK_DAYS = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
 
-interface CalendarCellData {
+export interface CalendarCellData {
   dayNumber: number;
   dateKey: string;
   isCurrentMonth: boolean;
@@ -20,16 +20,93 @@ interface CalendarCellData {
   isOverBudget: boolean;
 }
 
+export function buildCalendarMatrix(
+  year: number,
+  month: number,
+  dailySummaries: Record<string, { totalSpent: number; isOverBudget: boolean }>
+): CalendarCellData[] {
+  const cells: CalendarCellData[] = [];
+
+  // 1. Current month length
+  const daysInCurrentMonth = new Date(year, month, 0).getDate();
+
+  // 2. Monday-based first day of week (0 = Monday, ..., 6 = Sunday)
+  const firstDayDate = new Date(year, month - 1, 1);
+  const leadingDaysCount = (firstDayDate.getDay() + 6) % 7;
+
+  // 3. Leading days from previous month
+  const prevMonth = month === 1 ? 12 : month - 1;
+  const prevYear = month === 1 ? year - 1 : year;
+  const daysInPrevMonth = new Date(prevYear, prevMonth, 0).getDate();
+
+  for (let i = leadingDaysCount - 1; i >= 0; i--) {
+    const dayNumber = daysInPrevMonth - i;
+    const dateKey = formatIsoDate(prevYear, prevMonth, dayNumber);
+    cells.push({
+      dayNumber,
+      dateKey,
+      isCurrentMonth: false,
+      amount: 0,
+      isOverBudget: false,
+    });
+  }
+
+  // 4. Current month days
+  for (let day = 1; day <= daysInCurrentMonth; day++) {
+    const dateKey = formatIsoDate(year, month, day);
+    const summary = dailySummaries[dateKey];
+    cells.push({
+      dayNumber: day,
+      dateKey,
+      isCurrentMonth: true,
+      amount: summary ? summary.totalSpent : 0,
+      isOverBudget: summary ? summary.isOverBudget : false,
+    });
+  }
+
+  // 5. Trailing days from next month to complete 35- or 42-cell grid
+  const totalCellsSoFar = cells.length;
+  const targetCells = totalCellsSoFar <= 35 ? 35 : Math.ceil(totalCellsSoFar / 7) * 7;
+  const trailingDaysCount = targetCells - totalCellsSoFar;
+
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextYear = month === 12 ? year + 1 : year;
+
+  for (let nextDay = 1; nextDay <= trailingDaysCount; nextDay++) {
+    const dateKey = formatIsoDate(nextYear, nextMonth, nextDay);
+    cells.push({
+      dayNumber: nextDay,
+      dateKey,
+      isCurrentMonth: false,
+      amount: 0,
+      isOverBudget: false,
+    });
+  }
+
+  return cells;
+}
+
 export function MonthCalendar({
   mode = 'compact',
   onBackPress,
   onOpenDetailed,
 }: MonthCalendarProps) {
-  const { selectedDate, setSelectedDate, openDaySheet, dailySummaries } = useLedger();
+  const {
+    selectedDate,
+    setSelectedDate,
+    openDaySheet,
+    dailySummaries,
+    activeYear,
+    activeMonth,
+    setActiveYearMonth,
+  } = useLedger();
 
-  // In this release, the baseline calendar is pinned to July 2024 as specified in the Figma prototype
-  const [currentYear, setCurrentYear] = useState<number>(2024);
-  const [currentMonth, setCurrentMonth] = useState<number>(7);
+  const [currentYear, setCurrentYear] = useState<number>(activeYear);
+  const [currentMonth, setCurrentMonth] = useState<number>(activeMonth);
+
+  useEffect(() => {
+    setActiveYearMonth(currentYear, currentMonth);
+  }, [currentYear, currentMonth, setActiveYearMonth]);
 
   const handlePrevMonth = () => {
     if (currentMonth === 1) {
@@ -49,45 +126,7 @@ export function MonthCalendar({
     }
   };
 
-  // Build calendar matrix (5 weeks x 7 days)
-  // July 2024 starts on Monday (T2 -> index 0) and has 31 days.
-  const calendarCells: CalendarCellData[] = [];
-  const daysInMonth = 31;
-
-  for (let day = 1; day <= daysInMonth; day++) {
-    const dayStr = day.toString().padStart(2, '0');
-    const monthStr = currentMonth.toString().padStart(2, '0');
-    const dateKey = `${currentYear}-${monthStr}-${dayStr}`;
-
-    const summary = dailySummaries[dateKey];
-    calendarCells.push({
-      dayNumber: day,
-      dateKey,
-      isCurrentMonth: true,
-      amount: summary ? summary.totalSpent : 0,
-      isOverBudget: summary ? summary.isOverBudget : false,
-    });
-  }
-
-  // 4 trailing days from next month (August 1..4) to complete the 35-cell grid (5 rows x 7 cols)
-  for (let nextDay = 1; nextDay <= 4; nextDay++) {
-    const nextMonth = currentMonth === 12 ? 1 : currentMonth + 1;
-    const nextYear = currentMonth === 12 ? currentYear + 1 : currentYear;
-    const dayStr = nextDay.toString().padStart(2, '0');
-    const monthStr = nextMonth.toString().padStart(2, '0');
-    const dateKey = `${nextYear}-${monthStr}-${dayStr}`;
-
-    // Sample mock amounts for next month preview matching mockup
-    const mockAmounts: Record<number, number> = { 1: 250000, 2: 180000, 3: 310000, 4: 220000 };
-
-    calendarCells.push({
-      dayNumber: nextDay,
-      dateKey,
-      isCurrentMonth: false,
-      amount: mockAmounts[nextDay] ?? 0,
-      isOverBudget: false,
-    });
-  }
+  const calendarCells = buildCalendarMatrix(currentYear, currentMonth, dailySummaries);
 
   const handleDayPress = (cell: CalendarCellData) => {
     if (!cell.isCurrentMonth) return;
@@ -107,6 +146,7 @@ export function MonthCalendar({
             accessibilityRole="button"
             accessibilityLabel="Quay lại"
             onPress={onBackPress}
+            hitSlop={8}
             style={({ pressed }) => [styles.navSquareButton, pressed && styles.pressed]}
             testID="calendar-back-button"
           >
@@ -136,6 +176,7 @@ export function MonthCalendar({
             accessibilityRole="button"
             accessibilityLabel="Tháng trước"
             onPress={handlePrevMonth}
+            hitSlop={8}
             style={({ pressed }) => [styles.arrowButton, pressed && styles.pressed]}
             testID="prev-month-button"
           >
@@ -145,6 +186,7 @@ export function MonthCalendar({
             accessibilityRole="button"
             accessibilityLabel="Tháng sau"
             onPress={handleNextMonth}
+            hitSlop={8}
             style={({ pressed }) => [styles.arrowButton, pressed && styles.pressed]}
             testID="next-month-button"
           >
@@ -166,14 +208,22 @@ export function MonthCalendar({
       <View style={styles.gridContainer}>
         {calendarCells.map((cell) => {
           const isSelected = cell.dateKey === selectedDate && cell.isCurrentMonth;
+          const hasSpending = cell.amount > 0 && cell.isCurrentMonth;
+          const statusText = hasSpending
+            ? cell.isOverBudget
+              ? 'vượt ngân sách'
+              : 'trong hạn mức'
+            : 'chưa có chi tiêu';
+
           return (
             <Pressable
               key={cell.dateKey}
               accessibilityRole="button"
-              accessibilityLabel={`Ngày ${cell.dayNumber} tháng ${cell.isCurrentMonth ? currentMonth : 'sau'}, ${cell.amount > 0 ? `${cell.amount} đồng` : 'chưa có chi tiêu'}`}
+              accessibilityLabel={`Ngày ${cell.dayNumber} tháng ${cell.isCurrentMonth ? currentMonth : 'sau'}, ${cell.amount > 0 ? `${formatVND(cell.amount)}, trạng thái: ${statusText}` : 'chưa có chi tiêu'}`}
               accessibilityState={{ selected: isSelected }}
               onPress={() => handleDayPress(cell)}
               disabled={!cell.isCurrentMonth}
+              hitSlop={4}
               style={({ pressed }) => [
                 styles.cell,
                 mode === 'detailed' && styles.detailedCell,
@@ -193,11 +243,10 @@ export function MonthCalendar({
               </Text>
 
               {/* In Detailed Mode: show compact amount under day */}
-              {mode === 'detailed' ? (
+              {mode === 'detailed' && cell.isCurrentMonth ? (
                 <Text
                   style={[
                     styles.amountText,
-                    !cell.isCurrentMonth && styles.amountTextDimmed,
                     isSelected && styles.amountTextSelected,
                   ]}
                   numberOfLines={1}
@@ -205,6 +254,21 @@ export function MonthCalendar({
                   {cell.amount > 0 ? formatCompactK(cell.amount) : ''}
                 </Text>
               ) : null}
+
+              {/* Budget Status Indicator Dot (Green = within budget, Red = overspent) */}
+              {hasSpending ? (
+                <View
+                  style={[
+                    styles.statusDot,
+                    cell.isOverBudget ? styles.dotOverBudget : styles.dotNormal,
+                    isSelected && styles.statusDotSelected,
+                  ]}
+                  testID={`status-dot-${cell.dateKey}`}
+                  accessibilityLabel={`Trạng thái ngân sách: ${statusText}`}
+                />
+              ) : (
+                <View style={styles.statusDotPlaceholder} />
+              )}
             </Pressable>
           );
         })}
@@ -240,8 +304,10 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   navSquareButton: {
-    width: 44,
-    height: 44,
+    minWidth: 48,
+    minHeight: 48,
+    width: 48,
+    height: 48,
     borderRadius: 14,
     backgroundColor: colors.surface,
     borderWidth: 1,
@@ -250,7 +316,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   backChevron: {
-    fontSize: 24,
+    fontSize: 26,
     fontWeight: '600',
     color: colors.text,
     lineHeight: 28,
@@ -277,9 +343,11 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   arrowButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
+    minWidth: 48,
+    minHeight: 48,
+    width: 48,
+    height: 48,
+    borderRadius: 12,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: '#E2E8F0',
@@ -287,10 +355,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   arrowIcon: {
-    fontSize: 20,
+    fontSize: 22,
     color: colors.text,
     fontWeight: '600',
-    lineHeight: 22,
+    lineHeight: 24,
   },
   weekRow: {
     flexDirection: 'row',
@@ -312,18 +380,21 @@ const styles = StyleSheet.create({
   },
   cell: {
     width: '13.2%',
-    height: 44,
-    borderRadius: 18,
+    minHeight: 48,
+    height: 48,
+    borderRadius: 16,
     backgroundColor: '#F8FAFC',
     borderWidth: 1,
     borderColor: '#F1F5F9',
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: 2,
   },
   detailedCell: {
-    height: 54,
+    minHeight: 56,
+    height: 56,
     borderRadius: 14,
-    paddingVertical: 4,
+    paddingVertical: 3,
     justifyContent: 'space-between',
   },
   cellSelected: {
@@ -332,7 +403,7 @@ const styles = StyleSheet.create({
   },
   dayNumberText: {
     ...type.bodyBold,
-    fontSize: 14,
+    fontSize: 13,
     color: colors.text,
   },
   dayNumberDimmed: {
@@ -344,16 +415,30 @@ const styles = StyleSheet.create({
   },
   amountText: {
     ...type.caption,
-    fontSize: 11,
+    fontSize: 10,
     color: colors.muted,
     fontWeight: '500',
-  },
-  amountTextDimmed: {
-    color: '#CBD5E1',
   },
   amountTextSelected: {
     color: '#CCFBF1',
     fontWeight: '700',
+  },
+  statusDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    marginTop: 2,
+    alignSelf: 'center',
+  },
+  statusDotPlaceholder: {
+    width: 5,
+    height: 5,
+    marginTop: 2,
+  },
+  statusDotSelected: {
+    backgroundColor: '#CCFBF1',
+    borderWidth: 1,
+    borderColor: colors.primary,
   },
   legendRow: {
     flexDirection: 'row',

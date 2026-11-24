@@ -1,12 +1,19 @@
 import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import {
-  generateInitialMonthSummaries,
+  deriveMonthlyBudgetSummary,
+  generateMonthSummaries,
   INITIAL_AVAILABLE_BALANCE,
-  INITIAL_MONTH_SUMMARY,
+  INITIAL_DAILY_BUDGET,
   INITIAL_REMAINING_BUDGET,
   INITIAL_TRANSACTIONS,
 } from '../fixtures/initialLedger';
-import { DailyExpenseSummary, MonthlyBudgetSummary, Transaction } from '../types/transaction';
+import {
+  DailyExpenseSummary,
+  formatIsoDate,
+  MonthlyBudgetSummary,
+  parseIsoDate,
+  Transaction,
+} from '../types/transaction';
 
 interface LedgerContextType {
   availableBalance: number;
@@ -14,11 +21,15 @@ interface LedgerContextType {
   toggleBalanceVisibility: () => void;
   selectedDate: string;
   setSelectedDate: (date: string) => void;
+  activeYear: number;
+  activeMonth: number;
+  setActiveYearMonth: (year: number, month: number) => void;
   transactions: Transaction[];
   addTransaction: (tx: Omit<Transaction, 'id' | 'createdAt'>) => void;
   monthlySummary: MonthlyBudgetSummary;
   dailySummaries: Record<string, DailyExpenseSummary>;
   getSummaryForDate: (date: string) => DailyExpenseSummary;
+  dailyBudgetLimit: number;
   remainingTodayBudget: number;
   isDaySheetOpen: boolean;
   openDaySheet: (date?: string) => void;
@@ -34,8 +45,9 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
   const [availableBalance, setAvailableBalance] = useState<number>(INITIAL_AVAILABLE_BALANCE);
   const [isBalanceVisible, setIsBalanceVisible] = useState<boolean>(true);
   const [selectedDate, setSelectedDate] = useState<string>('2024-07-10');
+  const [activeYear, setActiveYear] = useState<number>(2024);
+  const [activeMonth, setActiveMonth] = useState<number>(7);
   const [transactions, setTransactions] = useState<Transaction[]>(INITIAL_TRANSACTIONS);
-  const [monthlySummary] = useState<MonthlyBudgetSummary>(INITIAL_MONTH_SUMMARY);
   const [isDaySheetOpen, setIsDaySheetOpen] = useState<boolean>(false);
   const [isManualEntryOpen, setIsManualEntryOpen] = useState<boolean>(false);
 
@@ -62,6 +74,11 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     setIsManualEntryOpen(false);
   }, []);
 
+  const setActiveYearMonth = useCallback((year: number, month: number) => {
+    setActiveYear(year);
+    setActiveMonth(month);
+  }, []);
+
   const addTransaction = useCallback(
     (txData: Omit<Transaction, 'id' | 'createdAt'>) => {
       const newTx: Transaction = {
@@ -76,27 +93,38 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
+  // Daily summaries dynamically generated for the active year and month
   const dailySummaries = useMemo(() => {
-    return generateInitialMonthSummaries(2024, 7, transactions);
-  }, [transactions]);
+    return generateMonthSummaries(activeYear, activeMonth, transactions);
+  }, [activeYear, activeMonth, transactions]);
+
+  // Monthly summary derived directly and coherently from the daily aggregation
+  const monthlySummary = useMemo(() => {
+    return deriveMonthlyBudgetSummary(activeYear, activeMonth, dailySummaries);
+  }, [activeYear, activeMonth, dailySummaries]);
 
   const getSummaryForDate = useCallback(
     (date: string): DailyExpenseSummary => {
       if (dailySummaries[date]) {
         return dailySummaries[date];
       }
+      const { year, month, day } = parseIsoDate(date);
+      const dayTxs = transactions.filter((tx) => tx.date === date);
+      const computedTotal = dayTxs.reduce((sum, tx) => sum + tx.amount, 0);
+      const isOverBudget = computedTotal > 280000;
+
       return {
         date,
-        dayNumber: parseInt(date.split('-')[2] || '1', 10),
-        month: 7,
-        year: 2024,
-        totalSpent: 0,
-        isOverBudget: false,
-        status: 'empty',
-        transactions: [],
+        dayNumber: day,
+        month,
+        year,
+        totalSpent: computedTotal,
+        isOverBudget,
+        status: computedTotal === 0 ? 'empty' : isOverBudget ? 'over_budget' : 'normal',
+        transactions: dayTxs,
       };
     },
-    [dailySummaries]
+    [dailySummaries, transactions]
   );
 
   const value = useMemo<LedgerContextType>(() => {
@@ -106,11 +134,15 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
       toggleBalanceVisibility,
       selectedDate,
       setSelectedDate,
+      activeYear,
+      activeMonth,
+      setActiveYearMonth,
       transactions,
       addTransaction,
       monthlySummary,
       dailySummaries,
       getSummaryForDate,
+      dailyBudgetLimit: INITIAL_DAILY_BUDGET,
       remainingTodayBudget: INITIAL_REMAINING_BUDGET,
       isDaySheetOpen,
       openDaySheet,
@@ -124,6 +156,9 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     isBalanceVisible,
     toggleBalanceVisibility,
     selectedDate,
+    activeYear,
+    activeMonth,
+    setActiveYearMonth,
     transactions,
     addTransaction,
     monthlySummary,

@@ -71,7 +71,7 @@ export function DayTransactionsSheet({ visible, onClose }: DayTransactionsSheetP
           {/* Drag Handle Indicator */}
           <View style={styles.handleBar} />
 
-          {/* Title Row with Close Button */}
+          {/* Title Row with Accessible Close Button (>= 48dp touch target) */}
           <View style={styles.headerRow}>
             <View style={styles.headerTextGroup}>
               <Text accessibilityRole="header" style={styles.titleText}>
@@ -86,6 +86,7 @@ export function DayTransactionsSheet({ visible, onClose }: DayTransactionsSheetP
               accessibilityRole="button"
               accessibilityLabel="Đóng chi tiết ngày"
               onPress={handleClose}
+              hitSlop={8}
               style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}
               testID="close-day-sheet"
             >
@@ -220,9 +221,11 @@ const styles = StyleSheet.create({
     color: colors.muted,
   },
   closeButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
+    minWidth: 48,
+    minHeight: 48,
+    width: 48,
+    height: 48,
+    borderRadius: 14,
     backgroundColor: '#F8FAFC',
     borderWidth: 1,
     borderColor: '#E2E8F0',
@@ -230,7 +233,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   closeIcon: {
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '700',
     color: colors.muted,
   },

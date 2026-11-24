@@ -11,7 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLedger } from '../../context/LedgerContext';
 import { colors, type } from '../../theme';
-import { CATEGORIES, Category, CategoryId } from '../../types/transaction';
+import { CATEGORIES, Category, CategoryId, formatVND } from '../../types/transaction';
 import { CategoryPickerModal } from './CategoryPickerModal';
 import { VirtualNumpad } from './VirtualNumpad';
 
@@ -25,13 +25,14 @@ export function ManualEntryModal({ visible, onClose }: ManualEntryModalProps) {
     isManualEntryOpen,
     closeManualEntry,
     addTransaction,
-    remainingTodayBudget,
+    selectedDate,
+    dailyBudgetLimit,
   } = useLedger();
 
   const isModalVisible = visible !== undefined ? visible : isManualEntryOpen;
   const handleClose = onClose || closeManualEntry;
 
-  // Numpad amount buffer in raw digits (default '45000' to match Figma initial frame)
+  // Initial amount buffer matches Figma Page 8: '45000'
   const [amountStr, setAmountStr] = useState<string>('45000');
   const [selectedCategoryId, setSelectedCategoryId] = useState<CategoryId>('food');
   const [note, setNote] = useState<string>('Cơm trưa');
@@ -45,7 +46,6 @@ export function ManualEntryModal({ visible, onClose }: ManualEntryModalProps) {
   const handleDigitPress = (digit: string) => {
     setValidationError(null);
     setAmountStr((prev) => {
-      // Avoid leading zeros
       if (prev === '0') return digit;
       if (prev.length >= 9) return prev; // Cap at 999,999,999 VND
       return prev + digit;
@@ -69,8 +69,10 @@ export function ManualEntryModal({ visible, onClose }: ManualEntryModalProps) {
     });
   };
 
-  // Remaining budget preview calculation
-  const remainingAfterExpense = Math.max(0, remainingTodayBudget - numericAmount);
+  // Remaining budget preview calculation (carenta-implementation-plan §4 line 120):
+  // Prior daily allowance = 120,000 ₫. With 45,000 ₫ expense: 120,000 - 45,000 = 75,000 ₫ remaining.
+  const priorDailyAllowance = dailyBudgetLimit || 120000;
+  const remainingAfterExpense = priorDailyAllowance - numericAmount;
 
   const handleSave = () => {
     if (numericAmount <= 0) {
@@ -81,13 +83,15 @@ export function ManualEntryModal({ visible, onClose }: ManualEntryModalProps) {
     const now = new Date();
     const hours = now.getHours().toString().padStart(2, '0');
     const minutes = now.getMinutes().toString().padStart(2, '0');
-    const todayIso = now.toISOString().split('T')[0];
+
+    // Default to the active calendar date (e.g. 2024-07-10) so the record reconciles immediately
+    const entryDate = selectedDate || '2024-07-10';
 
     addTransaction({
       amount: numericAmount,
       categoryId: selectedCategoryId,
       note: note.trim() || selectedCategory.name,
-      date: todayIso,
+      date: entryDate,
       time: `${hours}:${minutes}`,
     });
 
@@ -109,7 +113,7 @@ export function ManualEntryModal({ visible, onClose }: ManualEntryModalProps) {
       onRequestClose={handleClose}
     >
       <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
-        {/* Top Header */}
+        {/* Top Header with >= 48dp Back Button */}
         <View style={styles.topHeader}>
           <Pressable
             accessibilityRole="button"
@@ -143,14 +147,26 @@ export function ManualEntryModal({ visible, onClose }: ManualEntryModalProps) {
               <Text style={styles.amountNumberText} testID="amount-display-value">
                 {formattedAmountDisplay}
               </Text>
-              <Text style={styles.amountCurrencyUnderlined}> đ</Text>
+              <Text style={styles.amountCurrencyUnderlined}> ₫</Text>
             </View>
 
-            {/* Remaining budget badge */}
-            <View style={styles.budgetBadge} testID="remaining-budget-badge">
-              <Text style={styles.budgetBadgeText}>
-                Còn {remainingAfterExpense.toLocaleString('vi-VN')}
-                <Text style={styles.currencyUnderline}> đ</Text> trong ngân sách hôm nay
+            {/* Remaining budget badge (carenta-implementation-plan §4 line 120) */}
+            <View
+              style={[
+                styles.budgetBadge,
+                remainingAfterExpense < 0 && styles.budgetBadgeOverspent,
+              ]}
+              testID="remaining-budget-badge"
+            >
+              <Text
+                style={[
+                  styles.budgetBadgeText,
+                  remainingAfterExpense < 0 && styles.budgetBadgeTextOverspent,
+                ]}
+              >
+                {remainingAfterExpense >= 0
+                  ? `Còn ${remainingAfterExpense.toLocaleString('vi-VN')} ₫ sau khoản chi này`
+                  : `Vượt ngân sách ${Math.abs(remainingAfterExpense).toLocaleString('vi-VN')} ₫ sau khoản chi này`}
               </Text>
             </View>
 
@@ -219,7 +235,9 @@ export function ManualEntryModal({ visible, onClose }: ManualEntryModalProps) {
             <Text style={styles.dateLabel}>Ngày giao dịch</Text>
             <View style={styles.dateValueGroup}>
               <Text style={styles.calendarIcon}>📅</Text>
-              <Text style={styles.dateValueText}>Hôm nay</Text>
+              <Text style={styles.dateValueText}>
+                {selectedDate ? `Hôm nay (${selectedDate})` : 'Hôm nay'}
+              </Text>
             </View>
           </View>
 
@@ -268,10 +286,16 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   backButton: {
-    padding: 6,
+    minWidth: 48,
+    minHeight: 48,
+    width: 48,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
   },
   backIcon: {
-    fontSize: 24,
+    fontSize: 26,
     fontWeight: '700',
     color: colors.text,
   },
@@ -282,7 +306,7 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
   headerSpacer: {
-    width: 32,
+    width: 48,
   },
   accentDivider: {
     height: 3,
@@ -326,16 +350,19 @@ const styles = StyleSheet.create({
   budgetBadge: {
     backgroundColor: '#DCFCE7',
     paddingHorizontal: 14,
-    paddingVertical: 6,
+    paddingVertical: 8,
     borderRadius: 16,
+  },
+  budgetBadgeOverspent: {
+    backgroundColor: '#FEE2E2',
   },
   budgetBadgeText: {
     ...type.captionBold,
     color: '#15803D',
-    fontSize: 12,
+    fontSize: 13,
   },
-  currencyUnderline: {
-    textDecorationLine: 'underline',
+  budgetBadgeTextOverspent: {
+    color: colors.danger,
   },
   errorText: {
     ...type.caption,
