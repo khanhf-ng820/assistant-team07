@@ -15,13 +15,14 @@ Implements the 100% deterministic budget calculation engine (zero LLM math) and 
 
 - `GET /health`: Service health check.
 - `GET /api/v1/transactions` (and `/v1/transactions`): List transactions with date and kind filtering.
-- `POST /api/v1/transactions`: Create a transaction (requires `idempotency_key`, returns 409 on key collision with mismatched payload).
+- `POST /api/v1/transactions`: Create a transaction (requires `idempotency_key`, returns 409 when the key is reused with a different amount, kind, category, date, or note).
 - `GET /api/v1/budget/summary`: Budget summary including Safe-to-Spend, daily allowance, and recovered subsequent limits.
 - `GET /api/v1/goals`: List saving goals.
-- `POST /api/v1/goals`: Create active goal (rejects client-supplied balance overrides).
+- `POST /api/v1/goal` (alias `POST /api/v1/goals`): Create the single active goal. Rejects client-supplied balances (422) and returns 409 if a goal is already active, so saved money is never dropped.
 - `GET /api/v1/goal`: Get current active goal.
 - `PATCH /api/v1/goal`: Update goal parameters while preserving allocated savings.
-- `POST /api/v1/goal/allocate`: Allocate virtual savings into goal.
+- `POST /api/v1/goal/allocate`: Allocate virtual savings into goal. Moves value out of `savings_reserved` first (plan §7); only the part above the reserve lowers Safe-to-Spend.
+- `POST /api/v1/budget/config`: Set `opening_balance`, `unpaid_commitments`, `savings_reserved` (Phase 1 development helper).
 
 Interactive OpenAPI documentation is available at `http://localhost:8000/docs`.
 
@@ -31,9 +32,11 @@ Interactive OpenAPI documentation is available at `http://localhost:8000/docs`.
 uv sync --project services/carenta-api --locked --python 3.12
 uv run --project services/carenta-api uvicorn app.main:app --app-dir services/carenta-api --host 0.0.0.0 --port 8000
 ```
-This checks only that this process responds. There is no authentication,
-financial logic, Gemini integration, media upload, or ledger endpoint yet.
-`/v1/transactions` intentionally returns 404.
+Phase 1 storage is a single global in-memory store with no authentication
+(single tenant; data is lost on restart). Supabase persistence and auth come later.
+There is no Gemini integration or media upload yet. `days_remaining` is derived from
+`today` in Asia/Ho_Chi_Minh (inclusive to month-end); use the `days_remaining` query
+parameter on `/budget/summary` to override it per request.
 
 ## Database schema and secrets (issue #42)
 

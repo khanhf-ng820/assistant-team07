@@ -204,3 +204,134 @@ def test_dual_routing_support():
     assert get_v1.status_code == 200
     assert get_api.json()["total"] == 1
     assert get_v1.json()["total"] == 1
+
+
+TODAY = {"today": "2026-11-16"}  # 15 days remaining inclusive (16..30 Nov)
+
+
+def _setup_plan_section7_example():
+    """Plan §7: cash 3,000,000, rent 1,000,000, reserved savings 500,000, 15 days."""
+    cfg = client_request(
+        "POST",
+        "/api/v1/budget/config",
+        json={"opening_balance": 3000000, "unpaid_commitments": 1000000, "savings_reserved": 500000},
+    )
+    assert cfg.status_code == 200
+    goal = client_request(
+        "POST",
+        "/api/v1/goal",
+        json={"title": "Heo đất", "target_amount": 5000000, "deadline": "2027-03-01"},
+        params=TODAY,
+    )
+    assert goal.status_code == 201
+
+
+def _summary():
+    res = client_request("GET", "/api/v1/budget/summary", params=TODAY)
+    assert res.status_code == 200
+    return res.json()
+
+
+def test_allocate_moves_value_from_reserved_without_double_counting():
+    """Blocking item 1: allocation must not protect the same money twice (plan §7)."""
+    _setup_plan_section7_example()
+
+    client_request("POST", "/api/v1/goal/allocate", json={"amount": 200000}, params=TODAY)
+    data = _summary()
+    assert (data["savings_allocated"], data["savings_reserved"]) == (200000, 300000)
+    assert data["safe_to_spend"] == 1500000
+    assert data["daily_budget"] == 100000
+
+    # Allocate 100,000 more: discretionary funds stay at 1,500,000
+    res = client_request("POST", "/api/v1/goal/allocate", json={"amount": 100000}, params=TODAY)
+    assert res.status_code == 200
+    data = _summary()
+    assert (data["savings_allocated"], data["savings_reserved"]) == (300000, 200000)
+    assert data["protected"] == 1500000
+    assert data["safe_to_spend"] == 1500000
+    assert data["daily_budget"] == 100000
+
+
+def test_allocate_above_reserve_reduces_only_the_excess():
+    """Allocating beyond the remaining reserve reduces discretionary funds by the excess."""
+    _setup_plan_section7_example()
+    client_request("POST", "/api/v1/goal/allocate", json={"amount": 200000}, params=TODAY)
+    # reserved is 300,000; allocate 400,000 -> 100,000 excess
+    client_request("POST", "/api/v1/goal/allocate", json={"amount": 400000}, params=TODAY)
+    data = _summary()
+    assert data["savings_reserved"] == 0  # never negative
+    assert data["savings_allocated"] == 600000
+    assert data["safe_to_spend"] == 1400000
+
+
+def test_allocate_with_zero_reserve_reduces_discretionary_by_full_amount():
+    client_request("POST", "/api/v1/budget/config", json={"opening_balance": 1000000})
+    client_request(
+        "POST",
+        "/api/v1/goal",
+        json={"title": "G", "target_amount": 900000, "deadline": "2027-01-01"},
+        params=TODAY,
+    )
+    client_request("POST", "/api/v1/goal/allocate", json={"amount": 250000}, params=TODAY)
+    data = _summary()
+    assert data["savings_reserved"] == 0
+    assert data["safe_to_spend"] == 750000
+
+
+def test_second_goal_is_rejected_and_saved_money_stays_protected():
+    """Blocking item 2: POST /goal twice must not drop the allocated savings."""
+    _setup_plan_section7_example()
+    client_request("POST", "/api/v1/goal/allocate", json={"amount": 200000}, params=TODAY)
+    before = _summary()
+
+    new_goal = {"title": "Goal 2", "target_amount": 1000000, "deadline": "2027-02-01"}
+    for path in ("/api/v1/goal", "/api/v1/goals", "/v1/goal"):
+        res = client_request("POST", path, json=new_goal, params=TODAY)
+        assert res.status_code == 409, path
+
+    after = _summary()
+    assert after == before
+    assert after["savings_allocated"] == 200000
+    assert after["safe_to_spend"] == 1500000
+    goals = client_request("GET", "/api/v1/goals", params=TODAY).json()
+    assert len(goals) == 1 and goals[0]["allocated_amount"] == 200000
+
+    # PATCH remains the way to edit, and preserves the allocation
+    patch = client_request("PATCH", "/api/v1/goal", json={"target_amount": 1000000}, params=TODAY)
+    assert patch.status_code == 200
+    assert patch.json()["allocated_amount"] == 200000
+
+
+def test_goal_create_rejects_client_supplied_balances():
+    res = client_request(
+        "POST",
+        "/api/v1/goal",
+        json={"title": "G", "target_amount": 1000, "deadline": "2027-01-01", "initial_allocated": 999999},
+    )
+    assert res.status_code == 422
+    assert client_request("GET", "/api/v1/goal").status_code == 404
+
+
+def test_idempotency_conflict_when_note_differs():
+    payload = {
+        "amount": 20000,
+        "kind": "expense",
+        "category": "Di chuyển",
+        "date": "2026-11-19",
+        "note": "Xe buýt",
+        "idempotency_key": "tx-note-1",
+    }
+    assert client_request("POST", "/api/v1/transactions", json=payload).status_code == 201
+    # Exact retry returns the original record
+    assert client_request("POST", "/api/v1/transactions", json=payload).status_code == 201
+    changed = dict(payload, note="Grab")
+    assert client_request("POST", "/api/v1/transactions", json=changed).status_code == 409
+    assert client_request("GET", "/api/v1/transactions").json()["total"] == 1
+
+
+def test_budget_config_cannot_pin_days_remaining():
+    """Non-blocking item: days_remaining stays derived from `today`, never sticky."""
+    client_request("POST", "/api/v1/budget/config", json={"opening_balance": 100000, "planning_days_remaining": 10})
+    d1 = client_request("GET", "/api/v1/budget/summary", params={"today": "2026-11-23"}).json()
+    d2 = client_request("GET", "/api/v1/budget/summary", params={"today": "2026-11-29"}).json()
+    assert (d1["days_remaining"], d2["days_remaining"]) == (8, 2)

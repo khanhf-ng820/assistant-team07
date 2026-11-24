@@ -6,7 +6,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, FastAPI, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from app.repository import IdempotencyConflictError, repository
+from app.repository import ActiveGoalExistsError, IdempotencyConflictError, repository
 from app.schemas import (
     BudgetSummaryResponse,
     GoalCreate,
@@ -27,7 +27,6 @@ class BudgetConfigRequest(BaseModel):
     opening_balance: Optional[int] = Field(default=None, ge=0)
     unpaid_commitments: Optional[int] = Field(default=None, ge=0)
     savings_reserved: Optional[int] = Field(default=None, ge=0)
-    planning_days_remaining: Optional[int] = Field(default=None, gt=0)
 
 
 class GoalAllocationRequest(BaseModel):
@@ -84,7 +83,6 @@ def create_router() -> APIRouter:
             opening_balance=payload.opening_balance,
             unpaid_commitments=payload.unpaid_commitments,
             savings_reserved=payload.savings_reserved,
-            planning_days_remaining=payload.planning_days_remaining,
         )
         return {"status": "ok", "message": "Budget parameters updated"}
 
@@ -101,7 +99,10 @@ def create_router() -> APIRouter:
         payload: GoalCreate,
         today: Optional[dt.date] = Query(None, description="Calculation reference date"),
     ) -> GoalResponse:
-        return repository.set_active_goal(payload, today=today)
+        try:
+            return repository.set_active_goal(payload, today=today)
+        except ActiveGoalExistsError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
     @router.get("/goal", response_model=GoalResponse)
     def get_active_goal(
@@ -117,7 +118,10 @@ def create_router() -> APIRouter:
         payload: GoalCreate,
         today: Optional[dt.date] = Query(None, description="Calculation reference date"),
     ) -> GoalResponse:
-        return repository.set_active_goal(payload, today=today)
+        try:
+            return repository.set_active_goal(payload, today=today)
+        except ActiveGoalExistsError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
     @router.patch("/goal", response_model=GoalResponse)
     def update_active_goal(

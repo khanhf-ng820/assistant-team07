@@ -45,7 +45,7 @@ class GoalBase(BaseModel):
 
 class GoalCreate(GoalBase):
     # Plan §9: Goal creation rejects client-supplied cash or saved-balance overrides
-    pass
+    model_config = ConfigDict(extra="forbid")
 
 
 class GoalUpdate(BaseModel):

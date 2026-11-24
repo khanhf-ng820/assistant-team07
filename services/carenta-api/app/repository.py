@@ -53,6 +53,11 @@ class IdempotencyConflictError(Exception):
     pass
 
 
+class ActiveGoalExistsError(Exception):
+    """Raised when creating a goal while one is already active."""
+    pass
+
+
 class InMemoryRepository:
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -65,7 +70,6 @@ class InMemoryRepository:
         self._opening_balance: int = 0
         self._unpaid_commitments: int = 0
         self._savings_reserved: int = 0
-        self._manual_planning_days: Optional[int] = None
 
     def reset(self) -> None:
         """Clear all stored data (useful for test isolation)."""
@@ -77,14 +81,12 @@ class InMemoryRepository:
             self._opening_balance = 0
             self._unpaid_commitments = 0
             self._savings_reserved = 0
-            self._manual_planning_days = None
 
     def configure_budget(
         self,
         opening_balance: int | None = None,
         unpaid_commitments: int | None = None,
         savings_reserved: int | None = None,
-        planning_days_remaining: int | None = None,
     ) -> None:
         with self._lock:
             if opening_balance is not None:
@@ -93,8 +95,6 @@ class InMemoryRepository:
                 self._unpaid_commitments = unpaid_commitments
             if savings_reserved is not None:
                 self._savings_reserved = savings_reserved
-            if planning_days_remaining is not None:
-                self._manual_planning_days = planning_days_remaining
 
     # --- Transactions ---
 
@@ -110,6 +110,7 @@ class InMemoryRepository:
                     or record["kind"] != data.kind
                     or record["category"] != data.category
                     or record["date"] != data.date
+                    or record["note"] != data.note
                 ):
                     raise IdempotencyConflictError(
                         "Idempotency key conflict: payload does not match the original transaction"
@@ -163,9 +164,17 @@ class InMemoryRepository:
     # --- Goals ---
 
     def set_active_goal(self, data: GoalCreate, today: Optional[dt.date] = None) -> GoalResponse:
-        """Create or replace active goal. Rejects client-supplied balance overrides."""
+        """Create the single active goal. Rejects client-supplied balance overrides.
+
+        Raises ActiveGoalExistsError if a goal is already active, so money already
+        allocated to it can never silently become spendable. Use update_active_goal.
+        """
         current_date = today or get_current_date()
         with self._lock:
+            if self._active_goal_id and self._active_goal_id in self._goals:
+                raise ActiveGoalExistsError(
+                    "An active goal already exists; update it with PATCH /goal instead"
+                )
             goal_id = str(uuid.uuid4())
             now = dt.datetime.now(dt.timezone.utc)
             record = {
@@ -198,13 +207,18 @@ class InMemoryRepository:
         return self._format_goal(record, current_date)
 
     def allocate_to_active_goal(self, amount: int, today: Optional[dt.date] = None) -> Optional[GoalResponse]:
-        """Allocate virtual savings to the active goal."""
+        """Allocate virtual savings to the active goal.
+
+        Plan §7: allocation moves value from the period's still-reserved savings into
+        allocated savings. Only the part above the reserve reduces discretionary funds.
+        """
         current_date = today or get_current_date()
         with self._lock:
             if not self._active_goal_id or self._active_goal_id not in self._goals:
                 return None
             record = self._goals[self._active_goal_id]
             record["allocated_amount"] += amount
+            self._savings_reserved -= min(amount, self._savings_reserved)
 
         return self._format_goal(record, current_date)
 
@@ -261,8 +275,6 @@ class InMemoryRepository:
             # Derive effective remaining days to month-end inclusively
             if days_remaining is not None:
                 effective_days = days_remaining
-            elif self._manual_planning_days is not None:
-                effective_days = self._manual_planning_days
             else:
                 effective_days = calculate_days_remaining_to_month_end(current_date)
 
