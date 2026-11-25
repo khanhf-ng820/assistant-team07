@@ -36,6 +36,14 @@ export function MonthlyBudgetSummaryCard() {
           {monthlySummary.daysOverBudget} ngày
         </Text>
       </View>
+
+      {/* Row 4: Unevaluated Days (carenta-implementation-plan §4 line 123) */}
+      <View style={styles.row}>
+        <Text style={styles.label}>Chưa đánh giá</Text>
+        <Text style={styles.mutedValue} testID="days-unevaluated">
+          {monthlySummary.daysUnevaluated} ngày
+        </Text>
+      </View>
     </View>
   );
 }
@@ -48,8 +56,8 @@ const styles = StyleSheet.create({
     gap: 14,
     marginHorizontal: 20,
     borderWidth: 1,
-    borderColor: '#F1F5F9',
-    shadowColor: '#0F172A',
+    borderColor: colors.borderSubtle,
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.04,
     shadowRadius: 10,
@@ -91,5 +99,11 @@ const styles = StyleSheet.create({
     color: colors.danger,
     fontSize: 15,
     fontWeight: '700',
+  },
+  mutedValue: {
+    ...type.bodyBold,
+    color: colors.muted,
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Modal,
   Pressable,
@@ -10,8 +10,16 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLedger } from '../../context/LedgerContext';
+import { formatVndDigits } from '../../format';
 import { colors, type } from '../../theme';
-import { CATEGORIES, Category, CategoryId, formatVietnameseDate, formatVND } from '../../types/transaction';
+import {
+  CATEGORIES,
+  Category,
+  CategoryId,
+  formatVietnameseDate,
+  formatVND,
+  shiftIsoDate,
+} from '../../types/transaction';
 import { CategoryPickerModal } from './CategoryPickerModal';
 import { VirtualNumpad } from './VirtualNumpad';
 
@@ -27,6 +35,7 @@ export function ManualEntryModal({ visible, onClose }: ManualEntryModalProps) {
     addTransaction,
     selectedDate,
     dailyBudgetLimit,
+    getSummaryForDate,
   } = useLedger();
 
   const isModalVisible = visible !== undefined ? visible : isManualEntryOpen;
@@ -36,8 +45,18 @@ export function ManualEntryModal({ visible, onClose }: ManualEntryModalProps) {
   const [amountStr, setAmountStr] = useState<string>('45000');
   const [selectedCategoryId, setSelectedCategoryId] = useState<CategoryId>('food');
   const [note, setNote] = useState<string>('Cơm trưa');
+  const [entryDate, setEntryDate] = useState<string>(selectedDate || '2024-07-10');
   const [isCategoryPickerOpen, setIsCategoryPickerOpen] = useState<boolean>(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (isModalVisible) {
+      setEntryDate(selectedDate || '2024-07-10');
+      setValidationError(null);
+      setIsSaving(false);
+    }
+  }, [isModalVisible, selectedDate]);
 
   const selectedCategory: Category = CATEGORIES[selectedCategoryId] || CATEGORIES.food;
   const numericAmount = parseInt(amountStr || '0', 10);
@@ -69,23 +88,23 @@ export function ManualEntryModal({ visible, onClose }: ManualEntryModalProps) {
     });
   };
 
-  // Remaining budget preview calculation (carenta-implementation-plan §4 line 120):
-  // Prior daily allowance = 120,000 ₫. With 45,000 ₫ expense: 120,000 - 45,000 = 75,000 ₫ remaining.
-  const priorDailyAllowance = dailyBudgetLimit || 120000;
-  const remainingAfterExpense = priorDailyAllowance - numericAmount;
+  // Remaining budget preview accounting for existing spending on entryDate (plan §4 line 120, §7 line 217)
+  const existingSpentOnDate = getSummaryForDate(entryDate).totalSpent;
+  const priorRemainingAllowance = dailyBudgetLimit - existingSpentOnDate;
+  const remainingAfterExpense = priorRemainingAllowance - numericAmount;
 
   const handleSave = () => {
+    if (isSaving) return;
+
     if (numericAmount <= 0) {
       setValidationError('Vui lòng nhập số tiền lớn hơn 0');
       return;
     }
 
+    setIsSaving(true);
     const now = new Date();
     const hours = now.getHours().toString().padStart(2, '0');
     const minutes = now.getMinutes().toString().padStart(2, '0');
-
-    // Default to the active calendar date (e.g. 2024-07-10) so the record reconciles immediately
-    const entryDate = selectedDate || '2024-07-10';
 
     addTransaction({
       amount: numericAmount,
@@ -98,12 +117,11 @@ export function ManualEntryModal({ visible, onClose }: ManualEntryModalProps) {
     // Reset and close
     setAmountStr('0');
     setNote('');
+    setIsSaving(false);
     handleClose();
   };
 
-  const formattedAmountDisplay = numericAmount > 0
-    ? numericAmount.toLocaleString('vi-VN')
-    : '0';
+  const formattedAmountDisplay = numericAmount > 0 ? formatVndDigits(numericAmount) : '0';
 
   return (
     <Modal
@@ -230,18 +248,40 @@ export function ManualEntryModal({ visible, onClose }: ManualEntryModalProps) {
             </View>
           </View>
 
-          {/* Transaction Date Row */}
+          {/* Transaction Date Row with prev/next day switcher */}
           <View style={styles.dateRow}>
             <Text style={styles.dateLabel}>Ngày giao dịch</Text>
-            <View style={styles.dateValueGroup}>
-              <Text style={styles.calendarIcon}>📅</Text>
-              <Text style={styles.dateValueText}>
-                {selectedDate
-                  ? selectedDate === '2024-07-10'
+            <View style={styles.dateControls}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Ngày trước"
+                onPress={() => setEntryDate((prev) => shiftIsoDate(prev, -1))}
+                hitSlop={4}
+                style={({ pressed }) => [styles.dateStepButton, pressed && styles.pressed]}
+                testID="manual-entry-prev-date"
+              >
+                <Text style={styles.dateStepIcon}>‹</Text>
+              </Pressable>
+
+              <View style={styles.dateValueGroup}>
+                <Text style={styles.calendarIcon}>📅</Text>
+                <Text style={styles.dateValueText} testID="manual-entry-date-value">
+                  {entryDate === '2024-07-10'
                     ? 'Hôm nay (10 tháng 7, 2024)'
-                    : formatVietnameseDate(selectedDate)
-                  : 'Hôm nay'}
-              </Text>
+                    : formatVietnameseDate(entryDate)}
+                </Text>
+              </View>
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Ngày sau"
+                onPress={() => setEntryDate((prev) => shiftIsoDate(prev, 1))}
+                hitSlop={4}
+                style={({ pressed }) => [styles.dateStepButton, pressed && styles.pressed]}
+                testID="manual-entry-next-date"
+              >
+                <Text style={styles.dateStepIcon}>›</Text>
+              </Pressable>
             </View>
           </View>
 
@@ -255,13 +295,21 @@ export function ManualEntryModal({ visible, onClose }: ManualEntryModalProps) {
           {/* Submit Action Button */}
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Lưu khoản chi"
+            accessibilityLabel={isSaving ? 'Đang lưu khoản chi' : 'Lưu khoản chi'}
+            accessibilityState={{ disabled: isSaving }}
+            disabled={isSaving}
             onPress={handleSave}
-            style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}
+            style={({ pressed }) => [
+              styles.saveButton,
+              isSaving && styles.saveButtonDisabled,
+              pressed && styles.pressed,
+            ]}
             testID="submit-expense-button"
           >
             <Text style={styles.saveCheckIcon}>✓</Text>
-            <Text style={styles.saveButtonText}>Lưu khoản chi</Text>
+            <Text style={styles.saveButtonText}>
+              {isSaving ? 'Đang lưu...' : 'Lưu khoản chi'}
+            </Text>
           </Pressable>
         </ScrollView>
 
@@ -280,7 +328,7 @@ export function ManualEntryModal({ visible, onClose }: ManualEntryModalProps) {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.background,
   },
   topHeader: {
     flexDirection: 'row',
@@ -314,7 +362,7 @@ const styles = StyleSheet.create({
   },
   accentDivider: {
     height: 3,
-    backgroundColor: '#3B82F6',
+    backgroundColor: colors.accentBlue,
     marginHorizontal: 20,
     borderRadius: 2,
     marginBottom: 8,
@@ -352,17 +400,17 @@ const styles = StyleSheet.create({
     textDecorationLine: 'underline',
   },
   budgetBadge: {
-    backgroundColor: '#DCFCE7',
+    backgroundColor: colors.successSoft,
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 16,
   },
   budgetBadgeOverspent: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: colors.dangerSoft,
   },
   budgetBadgeText: {
     ...type.captionBold,
-    color: '#15803D',
+    color: colors.successText,
     fontSize: 13,
   },
   budgetBadgeTextOverspent: {
@@ -377,10 +425,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
     paddingHorizontal: 16,
     paddingVertical: 4,
-    shadowColor: '#0F172A',
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.03,
     shadowRadius: 8,
@@ -400,7 +448,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   noteIconBg: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.surfaceSubtle,
   },
   fieldIconSymbol: {
     fontSize: 20,
@@ -433,23 +481,46 @@ const styles = StyleSheet.create({
   },
   cardDivider: {
     height: 1,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.borderSubtle,
   },
   dateRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 4,
+    gap: 8,
   },
   dateLabel: {
     ...type.body,
     color: colors.muted,
     fontSize: 14,
   },
+  dateControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 1,
+  },
+  dateStepButton: {
+    minWidth: 48,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  dateStepIcon: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.text,
+  },
   dateValueGroup: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    flexShrink: 1,
   },
   calendarIcon: {
     fontSize: 16,
@@ -457,7 +528,7 @@ const styles = StyleSheet.create({
   dateValueText: {
     ...type.bodyBold,
     color: colors.text,
-    fontSize: 14,
+    fontSize: 13,
   },
   saveButton: {
     flexDirection: 'row',
@@ -465,14 +536,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     height: 54,
-    backgroundColor: '#1E655A',
+    backgroundColor: colors.primaryButton,
     borderRadius: 16,
     marginTop: 4,
-    shadowColor: '#0F172A',
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.12,
     shadowRadius: 10,
     elevation: 3,
+  },
+  saveButtonDisabled: {
+    opacity: 0.6,
   },
   saveCheckIcon: {
     color: colors.surface,

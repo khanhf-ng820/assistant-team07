@@ -14,6 +14,7 @@ export function GreetingHeader({
   onWalletPress,
 }: GreetingHeaderProps) {
   const { availableBalance, isBalanceVisible, toggleBalanceVisibility } = useLedger();
+  const isNegativeBalance = availableBalance < 0;
 
   return (
     <View style={styles.container} testID="greeting-header">
@@ -28,10 +29,18 @@ export function GreetingHeader({
 
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Ví tài chính"
+          accessibilityLabel={
+            onWalletPress ? 'Ví tài chính' : 'Ví tài chính — Sắp ra mắt'
+          }
+          accessibilityState={{ disabled: !onWalletPress }}
+          disabled={!onWalletPress}
           onPress={onWalletPress}
           hitSlop={8}
-          style={({ pressed }) => [styles.walletButton, pressed && styles.pressed]}
+          style={({ pressed }) => [
+            styles.walletButton,
+            !onWalletPress && styles.walletButtonDisabled,
+            pressed && styles.pressed,
+          ]}
           testID="wallet-button"
         >
           <Text style={styles.walletIcon}>👛</Text>
@@ -55,7 +64,7 @@ export function GreetingHeader({
         </View>
 
         <Text
-          style={styles.balanceAmount}
+          style={[styles.balanceAmount, isNegativeBalance && styles.balanceAmountNegative]}
           testID="balance-amount-display"
           accessibilityLabel={`Số dư: ${isBalanceVisible ? formatVND(availableBalance) : 'Đã ẩn'}`}
         >
@@ -64,11 +73,32 @@ export function GreetingHeader({
 
         {/* Status Message Badge */}
         <View style={styles.statusBadge}>
-          <View style={styles.checkCircle}>
-            <Text style={styles.checkIcon}>✓</Text>
+          <View
+            style={[
+              styles.checkCircle,
+              isNegativeBalance && styles.checkCircleDanger,
+            ]}
+          >
+            <Text
+              style={[
+                styles.checkIcon,
+                isNegativeBalance && styles.checkIconDanger,
+              ]}
+            >
+              {isNegativeBalance ? '!' : '✓'}
+            </Text>
           </View>
           <View style={styles.statusTextGroup}>
-            <Text style={styles.statusTitle}>Bạn đang chi tiêu rất hợp lý</Text>
+            <Text
+              style={[
+                styles.statusTitle,
+                isNegativeBalance && styles.statusTitleDanger,
+              ]}
+            >
+              {isNegativeBalance
+                ? 'Số dư âm — cần đối soát thu chi'
+                : 'Bạn đang chi tiêu rất hợp lý'}
+            </Text>
             <Text style={styles.statusSubtitle}>Cập nhật 2 phút trước</Text>
           </View>
         </View>
@@ -108,11 +138,14 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 14,
-    backgroundColor: '#F0FDFA',
+    backgroundColor: colors.primaryTint,
     borderWidth: 1,
-    borderColor: '#CCFBF1',
+    borderColor: colors.primaryLight,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  walletButtonDisabled: {
+    opacity: 0.7,
   },
   walletIcon: {
     fontSize: 22,
@@ -123,8 +156,8 @@ const styles = StyleSheet.create({
     padding: 20,
     gap: 12,
     borderWidth: 1,
-    borderColor: '#F1F5F9',
-    shadowColor: '#0F172A',
+    borderColor: colors.borderSubtle,
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.04,
     shadowRadius: 12,
@@ -157,34 +190,46 @@ const styles = StyleSheet.create({
     fontSize: 32,
     fontWeight: '800',
   },
+  balanceAmountNegative: {
+    color: colors.danger,
+  },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     paddingTop: 8,
     borderTopWidth: 1,
-    borderTopColor: '#F8FAFC',
+    borderTopColor: colors.background,
   },
   checkCircle: {
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: '#DCFCE7',
+    backgroundColor: colors.successSoft,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  checkCircleDanger: {
+    backgroundColor: colors.dangerSoft,
+  },
   checkIcon: {
-    color: '#15803D',
+    color: colors.successText,
     fontSize: 13,
     fontWeight: '700',
+  },
+  checkIconDanger: {
+    color: colors.dangerText,
   },
   statusTextGroup: {
     gap: 2,
   },
   statusTitle: {
     ...type.captionBold,
-    color: '#15803D',
+    color: colors.successText,
     fontSize: 12,
+  },
+  statusTitleDanger: {
+    color: colors.dangerText,
   },
   statusSubtitle: {
     ...type.caption,

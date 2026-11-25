@@ -1,10 +1,12 @@
 import { fireEvent, render, screen } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 import { MonthCalendar } from '../src/components/calendar/MonthCalendar';
 import { LedgerProvider } from '../src/context/LedgerContext';
+import { colors } from '../src/theme';
 
 describe('MonthCalendar', () => {
-  it('renders July 2024 header, weekdays, and per-day budget status dots in compact mode', async () => {
+  it('renders July 2024 header, weekdays, and preserves overspent dot color on selected day', async () => {
     await render(
       <LedgerProvider>
         <MonthCalendar mode="compact" />
@@ -16,9 +18,20 @@ describe('MonthCalendar', () => {
       expect(screen.getByText(wd)).toBeTruthy();
     }
 
-    // Verify per-day color-coded status dots are rendered
-    expect(screen.getByTestId('status-dot-2024-07-10')).toBeTruthy();
-    expect(screen.getByTestId('status-dot-2024-07-01')).toBeTruthy();
+    // Selected overspent day (2024-07-10) must retain red overspent dot color
+    const selectedOverspentDot = screen.getByTestId('status-dot-2024-07-10');
+    expect(StyleSheet.flatten(selectedOverspentDot.props.style).backgroundColor).toBe(
+      colors.danger
+    );
+
+    // Within-budget day (2024-07-01) must use green success dot color
+    const normalDot = screen.getByTestId('status-dot-2024-07-01');
+    expect(StyleSheet.flatten(normalDot.props.style).backgroundColor).toBe(
+      colors.success
+    );
+
+    // Unevaluated day (2024-07-16) must not render a budget dot
+    expect(screen.queryByTestId('status-dot-2024-07-16')).toBeNull();
 
     expect(screen.getByText('Bình thường')).toBeTruthy();
     expect(screen.getByText('Vượt ngân sách')).toBeTruthy();
@@ -37,6 +50,24 @@ describe('MonthCalendar', () => {
     expect(screen.getByTestId('status-dot-2024-07-10')).toBeTruthy();
   });
 
+  it('labels leading previous-month and trailing next-month cells with their true month', async () => {
+    await render(
+      <LedgerProvider>
+        <MonthCalendar mode="compact" />
+      </LedgerProvider>
+    );
+
+    // Navigate to August 2024 (starts Thursday -> leading days 29, 30, 31 belong to July)
+    await fireEvent.press(screen.getByTestId('next-month-button'));
+    expect(screen.getByText('Tháng 8 năm 2024')).toBeTruthy();
+
+    const leadingJulyCell = screen.getByTestId('calendar-cell-2024-07-29');
+    expect(leadingJulyCell.props.accessibilityLabel).toContain('Ngày 29 tháng 7');
+
+    const trailingSeptCell = screen.getByTestId('calendar-cell-2024-09-01');
+    expect(trailingSeptCell.props.accessibilityLabel).toContain('Ngày 1 tháng 9');
+  });
+
   it('navigates dynamically across months and recalculates grid geometry', async () => {
     await render(
       <LedgerProvider>
@@ -44,15 +75,12 @@ describe('MonthCalendar', () => {
       </LedgerProvider>
     );
 
-    // Initial: July 2024
     expect(screen.getByText('Tháng 7 năm 2024')).toBeTruthy();
 
-    // Navigate to August 2024
     const nextButton = screen.getByTestId('next-month-button');
     await fireEvent.press(nextButton);
     expect(screen.getByText('Tháng 8 năm 2024')).toBeTruthy();
 
-    // Navigate back to July then to June 2024
     const prevButton = screen.getByTestId('prev-month-button');
     await fireEvent.press(prevButton);
     expect(screen.getByText('Tháng 7 năm 2024')).toBeTruthy();
@@ -69,17 +97,14 @@ describe('MonthCalendar', () => {
     );
 
     const nextButton = screen.getByTestId('next-month-button');
-    // From July 2024 to December 2024 (5 clicks)
     for (let i = 0; i < 5; i++) {
       await fireEvent.press(nextButton);
     }
     expect(screen.getByText('Tháng 12 năm 2024')).toBeTruthy();
 
-    // Next click navigates to January 2025
     await fireEvent.press(nextButton);
     expect(screen.getByText('Tháng 1 năm 2025')).toBeTruthy();
 
-    // Previous click navigates back to December 2024
     const prevButton = screen.getByTestId('prev-month-button');
     await fireEvent.press(prevButton);
     expect(screen.getByText('Tháng 12 năm 2024')).toBeTruthy();

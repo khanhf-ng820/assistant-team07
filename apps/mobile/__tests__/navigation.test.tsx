@@ -3,12 +3,14 @@ import RootLayout from '../app/_layout';
 import TabsLayout from '../app/(tabs)/_layout';
 import StatsScreen from '../app/(tabs)/index';
 import SavingsScreen from '../app/(tabs)/savings';
+import CalendarDetailScreen from '../app/calendar-detail';
 
 const routes = {
   _layout: RootLayout,
   '(tabs)/_layout': TabsLayout,
   '(tabs)/index': StatsScreen,
   '(tabs)/savings': SavingsScreen,
+  'calendar-detail': CalendarDetailScreen,
 };
 
 it('starts on Stats and switches between exactly two tabs', async () => {
@@ -17,7 +19,7 @@ it('starts on Stats and switches between exactly two tabs', async () => {
   expect(screen.getByRole('tab', { name: 'Thống kê' })).toBeSelected();
   await fireEvent.press(screen.getByRole('tab', { name: 'Tiết kiệm' }));
   expect(screen.getByRole('tab', { name: 'Tiết kiệm' })).toBeSelected();
-  expect(screen.getByText('Mục tiêu tiết kiệm sẽ xuất hiện tại đây.')).toBeVisible();
+  expect(screen.getByRole('header', { name: 'Heo tiết kiệm' })).toBeVisible();
 });
 
 it.each(['Thống kê', 'Tiết kiệm'])('opens and closes the same chooser from %s without changing tabs', async (tab) => {
@@ -49,4 +51,14 @@ it('opens ManualEntryModal when selecting Nhập thủ công from Tiết kiệm 
   expect(screen.getByTestId('remaining-budget-badge')).toBeTruthy();
   await fireEvent.press(screen.getByTestId('manual-entry-back'));
   expect(screen.queryByText('Thêm khoản chi')).toBeNull();
+});
+
+it('navigates from StatsScreen to calendar-detail and returns', async () => {
+  await renderRouter(routes, { initialUrl: '/' });
+  await fireEvent.press(screen.getByTestId('view-detailed-calendar-button'));
+  expect(screen.getByRole('header', { name: 'Lịch chi tiêu tháng' })).toBeVisible();
+  expect(screen.getByTestId('monthly-budget-summary-card')).toBeVisible();
+
+  await fireEvent.press(screen.getByTestId('calendar-back-button'));
+  expect(screen.getByTestId('greeting-header')).toBeVisible();
 });

@@ -14,6 +14,8 @@ const WEEK_DAYS = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
 
 export interface CalendarCellData {
   dayNumber: number;
+  month: number;
+  year: number;
   dateKey: string;
   isCurrentMonth: boolean;
   amount: number;
@@ -44,6 +46,8 @@ export function buildCalendarMatrix(
     const dateKey = formatIsoDate(prevYear, prevMonth, dayNumber);
     cells.push({
       dayNumber,
+      month: prevMonth,
+      year: prevYear,
       dateKey,
       isCurrentMonth: false,
       amount: 0,
@@ -57,6 +61,8 @@ export function buildCalendarMatrix(
     const summary = dailySummaries[dateKey];
     cells.push({
       dayNumber: day,
+      month,
+      year,
       dateKey,
       isCurrentMonth: true,
       amount: summary ? summary.totalSpent : 0,
@@ -76,6 +82,8 @@ export function buildCalendarMatrix(
     const dateKey = formatIsoDate(nextYear, nextMonth, nextDay);
     cells.push({
       dayNumber: nextDay,
+      month: nextMonth,
+      year: nextYear,
       dateKey,
       isCurrentMonth: false,
       amount: 0,
@@ -160,6 +168,10 @@ export function MonthCalendar({
           }
           onPress={mode === 'compact' ? onOpenDetailed : undefined}
           hitSlop={8}
+          style={({ pressed }) => [
+            styles.monthTitleButton,
+            mode === 'compact' && pressed && styles.pressed,
+          ]}
           testID="month-title-pressable"
         >
           <Text style={styles.monthTitleText}>
@@ -215,7 +227,11 @@ export function MonthCalendar({
             <Pressable
               key={cell.dateKey}
               accessibilityRole="button"
-              accessibilityLabel={`Ngày ${cell.dayNumber} tháng ${cell.isCurrentMonth ? activeMonth : 'sau'}, ${cell.amount > 0 ? `${formatVND(cell.amount)}, trạng thái: ${statusText}` : 'chưa có chi tiêu'}`}
+              accessibilityLabel={`Ngày ${cell.dayNumber} tháng ${cell.month}, ${
+                hasSpending
+                  ? `${formatVND(cell.amount)}, trạng thái: ${statusText}`
+                  : 'chưa có chi tiêu'
+              }`}
               accessibilityState={{ selected: isSelected }}
               onPress={() => handleDayPress(cell)}
               disabled={!cell.isCurrentMonth}
@@ -257,7 +273,6 @@ export function MonthCalendar({
                   style={[
                     styles.statusDot,
                     cell.isOverBudget ? styles.dotOverBudget : styles.dotNormal,
-                    isSelected && styles.statusDotSelected,
                   ]}
                   testID={`status-dot-${cell.dateKey}`}
                   accessibilityLabel={`Trạng thái ngân sách: ${statusText}`}
@@ -307,7 +322,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -328,6 +343,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  monthTitleButton: {
+    minHeight: 48,
+    justifyContent: 'center',
+  },
   monthTitleText: {
     ...type.subheading,
     fontSize: 18,
@@ -346,7 +365,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -379,9 +398,9 @@ const styles = StyleSheet.create({
     minHeight: 48,
     height: 48,
     borderRadius: 16,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.background,
     borderWidth: 1,
-    borderColor: '#F1F5F9',
+    borderColor: colors.borderSubtle,
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 2,
@@ -394,7 +413,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   cellSelected: {
-    backgroundColor: colors.primary,
+    backgroundColor: colors.primaryTint,
+    borderWidth: 2,
     borderColor: colors.primary,
   },
   dayNumberText: {
@@ -403,10 +423,10 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
   dayNumberDimmed: {
-    color: '#CBD5E1',
+    color: colors.borderStrong,
   },
   dayNumberSelected: {
-    color: colors.surface,
+    color: colors.primaryDark,
     fontWeight: '800',
   },
   amountText: {
@@ -416,25 +436,20 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   amountTextSelected: {
-    color: '#CCFBF1',
+    color: colors.primaryDark,
     fontWeight: '700',
   },
   statusDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
     marginTop: 2,
     alignSelf: 'center',
   },
   statusDotPlaceholder: {
-    width: 5,
-    height: 5,
+    width: 6,
+    height: 6,
     marginTop: 2,
-  },
-  statusDotSelected: {
-    backgroundColor: '#CCFBF1',
-    borderWidth: 1,
-    borderColor: colors.primary,
   },
   legendRow: {
     flexDirection: 'row',
@@ -454,7 +469,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   dotNormal: {
-    backgroundColor: '#0F766E',
+    backgroundColor: colors.success,
   },
   dotOverBudget: {
     backgroundColor: colors.danger,

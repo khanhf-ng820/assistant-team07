@@ -1,132 +1,109 @@
 import {
+  CategoryId,
   DailyExpenseSummary,
   formatIsoDate,
   MonthlyBudgetSummary,
+  parseIsoDate,
   Transaction,
 } from '../types/transaction';
 
 export const INITIAL_AVAILABLE_BALANCE = 4500000;
-export const INITIAL_DAILY_BUDGET = 120000;
-export const INITIAL_REMAINING_BUDGET = 75000; // Remaining budget after a 45,000 ₫ expense against 120,000 ₫ allowance
+export const DAILY_BUDGET_LIMIT = 280000;
+export const MONTHLY_BUDGET_LIMIT = 6000000;
 
+function fixtureTx(
+  day: number,
+  seq: number,
+  amount: number,
+  categoryId: CategoryId,
+  note: string,
+  time: string
+): Transaction {
+  const date = formatIsoDate(2024, 7, day);
+  return {
+    id: `tx-${date}-${seq}`,
+    amount,
+    categoryId,
+    note,
+    date,
+    time,
+    createdAt: `${date}T${time}:00.000Z`,
+  };
+}
+
+/**
+ * Single coherent July 2024 ledger fixture (days 1..15 evaluated: 12 within <= 280k,
+ * 3 over > 280k on days 3, 10, 13; days 16..31 unevaluated).
+ * Day 10 matches Figma Page 18 (65k + 45k + 180k = 290k).
+ * Day 9 spends 160k so prior remaining allowance is 120k (matching plan §4 line 120).
+ */
 export const INITIAL_TRANSACTIONS: Transaction[] = [
-  {
-    id: 'tx-2024-07-10-1',
-    amount: 65000,
-    categoryId: 'food',
-    note: 'Cơm trưa',
-    date: '2024-07-10',
-    time: '12:15',
-    createdAt: '2024-07-10T12:15:00.000Z',
-  },
-  {
-    id: 'tx-2024-07-10-2',
-    amount: 45000,
-    categoryId: 'transport',
-    note: 'GrabBike',
-    date: '2024-07-10',
-    time: '14:30',
-    createdAt: '2024-07-10T14:30:00.000Z',
-  },
-  {
-    id: 'tx-2024-07-10-3',
-    amount: 180000,
-    categoryId: 'shopping',
-    note: 'Áo thun',
-    date: '2024-07-10',
-    time: '18:45',
-    createdAt: '2024-07-10T18:45:00.000Z',
-  },
+  fixtureTx(1, 1, 250000, 'food', 'Đi chợ đầu tháng', '09:30'),
+  fixtureTx(2, 1, 180000, 'bills', 'Tiền điện thoại', '10:00'),
+  fixtureTx(3, 1, 310000, 'shopping', 'Mua đồ gia dụng', '16:20'),
+  fixtureTx(4, 1, 220000, 'food', 'Ăn tối cùng bạn', '19:15'),
+  fixtureTx(5, 1, 195000, 'transport', 'Đổ xăng & gửi xe', '08:45'),
+  fixtureTx(6, 1, 280000, 'education', 'Mua sách tham khảo', '15:00'),
+  fixtureTx(7, 1, 240000, 'entertainment', 'Xem phim cuối tuần', '20:00'),
+  fixtureTx(8, 1, 205000, 'food', 'Cơm văn phòng & cà phê', '12:10'),
+  fixtureTx(9, 1, 160000, 'food', 'Ăn trưa & trà sữa', '13:05'),
+  fixtureTx(10, 1, 65000, 'food', 'Cơm trưa', '12:15'),
+  fixtureTx(10, 2, 45000, 'transport', 'GrabBike', '14:30'),
+  fixtureTx(10, 3, 180000, 'shopping', 'Áo thun', '18:45'),
+  fixtureTx(11, 1, 210000, 'bills', 'Cước Internet', '11:00'),
+  fixtureTx(12, 1, 185000, 'food', 'Bữa trưa & hoa quả', '12:40'),
+  fixtureTx(13, 1, 300000, 'entertainment', 'Tụ tập cuối tuần', '19:30'),
+  fixtureTx(14, 1, 260000, 'shopping', 'Vật dụng cá nhân', '17:10'),
+  fixtureTx(15, 1, 215000, 'food', 'Cơm trưa & nước ép', '12:25'),
 ];
 
-/**
- * July 2024 daily expense totals matching Figma Page 17:
- * Evaluated days 1..15 with Day 10 (290k = 65k + 45k + 180k).
- */
-export const JULY_2024_DAY_AMOUNTS: Record<number, number> = {
-  1: 250000,
-  2: 180000,
-  3: 310000,
-  4: 220000,
-  5: 195000,
-  6: 280000,
-  7: 240000,
-  8: 205000,
-  9: 175000,
-  10: 290000,
-  11: 210000,
-  12: 185000,
-  13: 300000,
-  14: 260000,
-  15: 215000,
-  16: 190000,
-  17: 305000,
-  18: 225000,
-  19: 200000,
-  20: 315000,
-  21: 270000,
-  22: 230000,
-  23: 205000,
-  24: 320000,
-  25: 245000,
-  26: 210000,
-  27: 330000,
-  28: 285000,
-  29: 235000,
-  30: 215000,
-  31: 345000,
-};
+/** Builds a single day's summary directly from confirmed transactions. */
+export function buildDailyExpenseSummary(
+  date: string,
+  transactionsForDate: Transaction[],
+  dailyBudgetLimit: number = DAILY_BUDGET_LIMIT
+): DailyExpenseSummary {
+  const { year, month, day } = parseIsoDate(date);
+  const totalSpent = transactionsForDate.reduce((sum, tx) => sum + tx.amount, 0);
+  const isOverBudget = totalSpent > dailyBudgetLimit;
 
-/**
- * Days flagged as over budget in Figma mockup (e.g. daily expenditure > 280,000 ₫)
- */
-export const JULY_2024_OVER_BUDGET_DAYS = new Set([3, 10, 20]);
+  return {
+    date,
+    dayNumber: day,
+    month,
+    year,
+    totalSpent,
+    isOverBudget,
+    status: totalSpent === 0 ? 'empty' : isOverBudget ? 'over_budget' : 'normal',
+    transactions: transactionsForDate,
+  };
+}
 
 /**
  * Generates daily expense summaries dynamically for any given month/year
+ * solely from confirmed transactions so calendar cells and sheets always reconcile.
  */
 export function generateMonthSummaries(
   year: number,
   month: number,
-  customTransactions: Transaction[] = INITIAL_TRANSACTIONS
+  transactions: Transaction[] = INITIAL_TRANSACTIONS,
+  dailyBudgetLimit: number = DAILY_BUDGET_LIMIT
 ): Record<string, DailyExpenseSummary> {
   const result: Record<string, DailyExpenseSummary> = {};
   const daysInMonth = new Date(year, month, 0).getDate();
 
   for (let day = 1; day <= daysInMonth; day++) {
     const dateKey = formatIsoDate(year, month, day);
-    const txsForDay = customTransactions.filter((tx) => tx.date === dateKey);
-
-    let computedTotal = 0;
-    if (txsForDay.length > 0) {
-      computedTotal = txsForDay.reduce((sum, tx) => sum + tx.amount, 0);
-    } else if (year === 2024 && month === 7) {
-      computedTotal = JULY_2024_DAY_AMOUNTS[day] ?? 0;
-    }
-
-    const isOverBudget =
-      year === 2024 && month === 7
-        ? JULY_2024_OVER_BUDGET_DAYS.has(day) || computedTotal > 280000
-        : computedTotal > 280000;
-
-    result[dateKey] = {
-      date: dateKey,
-      dayNumber: day,
-      month,
-      year,
-      totalSpent: computedTotal,
-      isOverBudget,
-      status: computedTotal === 0 ? 'empty' : isOverBudget ? 'over_budget' : 'normal',
-      transactions: txsForDay,
-    };
+    const txsForDay = transactions.filter((tx) => tx.date === dateKey);
+    result[dateKey] = buildDailyExpenseSummary(dateKey, txsForDay, dailyBudgetLimit);
   }
 
   return result;
 }
 
 /**
- * Derives the monthly summary dynamically and coherently from the daily aggregation
- * (satisfies docs/carenta-implementation-plan §4 line 122 & §13 line 346).
+ * Derives the monthly summary dynamically and coherently from daily aggregation
+ * without hardcoded overrides (plan §4 lines 122–123 & §13 line 346).
  */
 export function deriveMonthlyBudgetSummary(
   year: number,
@@ -141,22 +118,21 @@ export function deriveMonthlyBudgetSummary(
   const evaluatedDays = monthDays.filter((d) => d.totalSpent > 0);
   const daysOverBudget = evaluatedDays.filter((d) => d.isOverBudget).length;
   const daysWithinBudget = evaluatedDays.length - daysOverBudget;
+  const daysUnevaluated = monthDays.length - evaluatedDays.length;
 
   return {
     month,
     year,
     monthTitle: `Tháng ${month} năm ${year}`,
     totalSpent,
-    budgetLimit: 6000000,
-    daysWithinBudget: year === 2024 && month === 7 && evaluatedDays.length >= 15 ? 12 : daysWithinBudget,
-    daysEvaluated: year === 2024 && month === 7 && evaluatedDays.length >= 15 ? 15 : evaluatedDays.length,
-    daysOverBudget: year === 2024 && month === 7 && evaluatedDays.length >= 15 ? 3 : daysOverBudget,
-    statusMessage: 'Bạn đang chi tiêu rất hợp lý',
+    budgetLimit: MONTHLY_BUDGET_LIMIT,
+    daysWithinBudget,
+    daysEvaluated: evaluatedDays.length,
+    daysOverBudget,
+    daysUnevaluated,
+    statusMessage:
+      daysOverBudget > 0 && daysWithinBudget === 0
+        ? 'Cần kiểm soát chi tiêu chặt hơn'
+        : 'Bạn đang chi tiêu rất hợp lý',
   };
 }
-
-export const INITIAL_MONTH_SUMMARY: MonthlyBudgetSummary = deriveMonthlyBudgetSummary(
-  2024,
-  7,
-  generateMonthSummaries(2024, 7, INITIAL_TRANSACTIONS)
-);

@@ -1,28 +1,62 @@
-# CARENTA placeholder API
+# CARENTA API Service
 
-Independent Python 3.12/FastAPI project. It does not import or modify the
-campus-office assistant or the lab exercises.
+Independent Python 3.12/FastAPI service for CARENTA budget planner.
+Implements the 100% deterministic budget calculation engine (zero LLM math) and Phase 1 REST endpoints (Issue #43).
 
-## Run from the repository root
+## Features
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and Python
-3.12, then:
+- **Safe-to-Spend (Tiền còn lại, UC04):** Deterministic derivation from income, fixed costs, and protected savings.
+- **Dynamic Daily Budget & Recovery (Hạn mức trong ngày & UC05):** Auto-recalculates subsequent daily limits when overspending occurs.
+- **Savings Goal Projection:** Suggests daily savings contribution rate based on remaining target and deadline.
+- **Transaction CRUD:** Supports paginated and date-filtered reads and idempotent writes (`idempotency_key`).
+- **Dual Routing:** Endpoints are accessible via both `/api/v1` and `/v1`.
+
+## Endpoints
+
+- `GET /health`: Service health check.
+- `GET /api/v1/transactions` (and `/v1/transactions`): List transactions with date and kind filtering.
+- `POST /api/v1/transactions`: Create a transaction (requires `idempotency_key`, returns 409 when the key is reused with a different amount, kind, category, date, or note).
+- `GET /api/v1/budget/summary`: Budget summary including Safe-to-Spend, daily allowance, and recovered subsequent limits.
+- `GET /api/v1/goals`: List saving goals.
+- `POST /api/v1/goal` (alias `POST /api/v1/goals`): Create the single active goal. Rejects client-supplied balances (422) and returns 409 if a goal is already active, so saved money is never dropped.
+- `GET /api/v1/goal`: Get current active goal.
+- `PATCH /api/v1/goal`: Update goal parameters while preserving allocated savings.
+- `POST /api/v1/goal/allocate`: Allocate virtual savings into goal. Moves value out of `savings_reserved` first (plan §7); only the part above the reserve lowers Safe-to-Spend.
+- `POST /api/v1/budget/config`: Set `opening_balance`, `unpaid_commitments`, `savings_reserved` (Phase 1 development helper).
+
+Interactive OpenAPI documentation is available at `http://localhost:8000/docs`.
+
+## Run from repository root
 
 ```sh
 uv sync --project services/carenta-api --locked --python 3.12
 uv run --project services/carenta-api uvicorn app.main:app --app-dir services/carenta-api --host 0.0.0.0 --port 8000
 ```
+Phase 1 storage is a single global in-memory store with no authentication
+(single tenant; data is lost on restart). Supabase persistence and auth come later.
+There is no Gemini integration or media upload yet. `days_remaining` is derived from
+`today` in Asia/Ho_Chi_Minh (inclusive to month-end); use the `days_remaining` query
+parameter on `/budget/summary` to override it per request.
 
-`uv` creates `services/carenta-api/.venv`; do not activate or replace the existing
-root virtual environment. Dependencies are recorded in `uv.lock`.
+## Database schema and secrets (issue #42)
 
-- Health: `http://localhost:8000/health`
-- Interactive API documentation: `http://localhost:8000/docs`
-- Response: `{"status":"ok","service":"carenta-api"}`
+The Supabase schema lives in `supabase/migrations/` at the repository root:
+`profiles`, `transactions`, `commitments` (planned events), `goals` (Heo đất)
+and `goal_allocations` (Lịch sử đút heo), with integer-VND constraints and
+owner-only row-level security. Apply it with the Supabase CLI
+(`supabase db push`) or by running the SQL file in the project's SQL editor.
 
-This checks only that this process responds. There is no database, authentication,
-financial logic, Gemini integration, media upload, or ledger endpoint.
-`/v1/transactions` intentionally returns 404.
+Supabase credentials are read only by this backend:
+
+```sh
+cp services/carenta-api/.env.example services/carenta-api/.env   # then fill in values
+uv run --env-file services/carenta-api/.env --project services/carenta-api uvicorn app.main:app --app-dir services/carenta-api --port 8000
+```
+
+`.env` is ignored by Git. `app/settings.py` wraps the keys in `SecretStr` so
+they do not appear in logs or `repr`. The service-role key bypasses RLS: never
+copy it into `apps/mobile` or an `EXPO_PUBLIC_*` variable; a test checks that the
+mobile sources do not reference it.
 
 ## Phone connection
 
@@ -35,28 +69,20 @@ development service to the public Internet. Stop it with Ctrl+C when finished.
 No CORS change is required for native Expo Go requests. Browser support and
 production deployment are outside this increment.
 
-## Tests
+## Run tests
 
-From the repository root:
+From the repository root (scoped):
 
 ```sh
 uv run --project services/carenta-api python -m pytest -c services/carenta-api/pyproject.toml services/carenta-api/tests -q
 ```
 
-The explicit configuration isolates these tests from the legacy root suite.
-They exercise the real ASGI application through HTTPX, without a listening server
-or external services.
+Or from `services/carenta-api`:
 
-Verified on 2026-11-05: locked dependency synchronization and all three API tests
-passed. The mobile TypeScript health client also reached a real local Uvicorn
-process. Review follow-up: the current response always includes both fields, but
-their model defaults make them optional in the generated OpenAPI schema; tighten
-that schema before using it for generated financial API contracts.
-
-The existing root tests are separately blocked by `ModuleNotFoundError: assistant`
-in `tests/test_eval.py` and `tests/test_smoke.py`. This template does not fix that
-package mismatch; passing API tests are not a passing repository baseline.
-
+```sh
+cd services/carenta-api
+uv run pytest
+```
 ## AI assistance and review
 
 2026-11-04: OpenCode / GPT-6.1 Sol Pro generated this isolated template,
@@ -64,7 +90,5 @@ health contract, tests, and instructions from the approved placeholder plan.
 Verification results and any remaining manual checks are reported at handoff;
 human inspection and teammate approval are still required.
 
-Existing files, including `docs/ai-use-log.md`, must remain unchanged for this
-increment. Before committing/publishing, obtain authorization to reconcile the
-canonical AI-use log requirement and include this assistance in the PR. Do not
-label this contribution “AI use: None.”
+AI assistance for this service is recorded in `docs/ai-use-log.md` and disclosed
+in each PR, as `DEFINITION_OF_DONE.md` requires.

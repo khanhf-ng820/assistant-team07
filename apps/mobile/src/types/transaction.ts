@@ -1,3 +1,5 @@
+export { formatVnd as formatVND } from '../format';
+
 export type CategoryId =
   | 'food'
   | 'transport'
@@ -46,18 +48,8 @@ export interface MonthlyBudgetSummary {
   daysWithinBudget: number;
   daysEvaluated: number;
   daysOverBudget: number;
+  daysUnevaluated: number;
   statusMessage: string;
-}
-
-export interface LedgerState {
-  availableBalance: number;
-  currencySymbol: string;
-  isBalanceVisible: boolean;
-  selectedDate: string;
-  dailyBudgetLimit: number;
-  remainingTodayBudget: number;
-  transactions: Transaction[];
-  monthlySummary: MonthlyBudgetSummary;
 }
 
 export const CATEGORIES: Record<CategoryId, Category> = {
@@ -120,15 +112,6 @@ export const CATEGORIES: Record<CategoryId, Category> = {
 };
 
 /**
- * Standardizes currency formatting according to project guidelines (carenta-implementation-plan §4 line 118):
- * - Always formats with a space and dong symbol: "45.000 ₫", "4.500.000 ₫"
- */
-export function formatVND(amount: number): string {
-  const formatted = amount.toLocaleString('vi-VN');
-  return `${formatted} ₫`;
-}
-
-/**
  * Formats compact amounts for detailed calendar grid (e.g., 250000 -> "250k")
  */
 export function formatCompactK(amount: number): string {
@@ -155,6 +138,13 @@ export function parseIsoDate(isoDate: string): { year: number; month: number; da
   };
 }
 
+/** Shifts an ISO YYYY-MM-DD date by deltaDays using calendar arithmetic. */
+export function shiftIsoDate(isoDate: string, deltaDays: number): string {
+  const { year, month, day } = parseIsoDate(isoDate);
+  const next = new Date(year, month - 1, day + deltaDays);
+  return formatIsoDate(next.getFullYear(), next.getMonth() + 1, next.getDate());
+}
+
 export const VI_DAYS = [
   'Chủ Nhật',
   'Thứ Hai',
@@ -175,4 +165,3 @@ export function formatVietnameseDate(isoDate: string): string {
     return isoDate;
   }
 }
-

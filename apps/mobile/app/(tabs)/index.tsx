@@ -20,10 +20,7 @@ export default function StatsScreen() {
         testID="stats-screen-scroll"
       >
         {/* Top Greeting & Recorded Balance Header */}
-        <GreetingHeader
-          userName="Minh"
-          onWalletPress={() => router.push('/calendar-detail')}
-        />
+        <GreetingHeader userName="Minh" />
 
         {/* Compact Calendar */}
         <MonthCalendar
@@ -78,9 +75,9 @@ const styles = StyleSheet.create({
     minHeight: 48,
     height: 48,
     borderRadius: 14,
-    backgroundColor: '#F0FDFA',
+    backgroundColor: colors.primaryTint,
     borderWidth: 1,
-    borderColor: '#CCFBF1',
+    borderColor: colors.primaryLight,
     gap: 8,
   },
   viewDetailButtonText: {

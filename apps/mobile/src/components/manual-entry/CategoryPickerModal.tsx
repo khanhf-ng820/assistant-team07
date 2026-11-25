@@ -87,7 +87,7 @@ export function CategoryPickerModal({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.5)',
+    backgroundColor: colors.overlayBackdropDark,
     justifyContent: 'center',
     padding: 24,
   },
@@ -100,7 +100,7 @@ const styles = StyleSheet.create({
     padding: 20,
     gap: 16,
     maxHeight: '75%',
-    shadowColor: '#0F172A',
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.15,
     shadowRadius: 24,
@@ -126,7 +126,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   itemRowSelected: {
-    backgroundColor: '#F0FDFA',
+    backgroundColor: colors.primaryTint,
   },
   iconContainer: {
     width: 40,
@@ -155,7 +155,7 @@ const styles = StyleSheet.create({
   cancelButton: {
     height: 48,
     borderRadius: 12,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.surfaceSubtle,
     alignItems: 'center',
     justifyContent: 'center',
   },

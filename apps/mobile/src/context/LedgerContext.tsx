@@ -1,21 +1,19 @@
 import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import {
+  buildDailyExpenseSummary,
+  DAILY_BUDGET_LIMIT,
   deriveMonthlyBudgetSummary,
   generateMonthSummaries,
   INITIAL_AVAILABLE_BALANCE,
-  INITIAL_DAILY_BUDGET,
-  INITIAL_REMAINING_BUDGET,
   INITIAL_TRANSACTIONS,
 } from '../fixtures/initialLedger';
 import {
   DailyExpenseSummary,
-  formatIsoDate,
   MonthlyBudgetSummary,
-  parseIsoDate,
   Transaction,
 } from '../types/transaction';
 
-export interface LedgerDataContextType {
+interface LedgerDataContextType {
   availableBalance: number;
   isBalanceVisible: boolean;
   toggleBalanceVisibility: () => void;
@@ -33,7 +31,7 @@ export interface LedgerDataContextType {
   remainingTodayBudget: number;
 }
 
-export interface LedgerUIContextType {
+interface LedgerUIContextType {
   isDaySheetOpen: boolean;
   openDaySheet: (date?: string) => void;
   closeDaySheet: () => void;
@@ -89,19 +87,20 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     (txData: Omit<Transaction, 'id' | 'createdAt'>) => {
       const newTx: Transaction = {
         ...txData,
-        id: `tx-${Date.now()}`,
+        id: `tx-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         createdAt: new Date().toISOString(),
       };
 
       setTransactions((prev) => [newTx, ...prev]);
-      setAvailableBalance((prev) => Math.max(0, prev - txData.amount));
+      // Recorded balance may go negative when spending exceeds current funds (plan §7 line 183)
+      setAvailableBalance((prev) => prev - txData.amount);
     },
     []
   );
 
   // Daily summaries dynamically generated for the active year and month
   const dailySummaries = useMemo(() => {
-    return generateMonthSummaries(activeYear, activeMonth, transactions);
+    return generateMonthSummaries(activeYear, activeMonth, transactions, DAILY_BUDGET_LIMIT);
   }, [activeYear, activeMonth, transactions]);
 
   // Monthly summary derived directly and coherently from the daily aggregation
@@ -114,24 +113,15 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
       if (dailySummaries[date]) {
         return dailySummaries[date];
       }
-      const { year, month, day } = parseIsoDate(date);
       const dayTxs = transactions.filter((tx) => tx.date === date);
-      const computedTotal = dayTxs.reduce((sum, tx) => sum + tx.amount, 0);
-      const isOverBudget = computedTotal > 280000;
-
-      return {
-        date,
-        dayNumber: day,
-        month,
-        year,
-        totalSpent: computedTotal,
-        isOverBudget,
-        status: computedTotal === 0 ? 'empty' : isOverBudget ? 'over_budget' : 'normal',
-        transactions: dayTxs,
-      };
+      return buildDailyExpenseSummary(date, dayTxs, DAILY_BUDGET_LIMIT);
     },
     [dailySummaries, transactions]
   );
+
+  const remainingTodayBudget = useMemo(() => {
+    return DAILY_BUDGET_LIMIT - getSummaryForDate(selectedDate).totalSpent;
+  }, [getSummaryForDate, selectedDate]);
 
   const dataValue = useMemo<LedgerDataContextType>(() => {
     return {
@@ -148,8 +138,8 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
       monthlySummary,
       dailySummaries,
       getSummaryForDate,
-      dailyBudgetLimit: INITIAL_DAILY_BUDGET,
-      remainingTodayBudget: INITIAL_REMAINING_BUDGET,
+      dailyBudgetLimit: DAILY_BUDGET_LIMIT,
+      remainingTodayBudget,
     };
   }, [
     availableBalance,
@@ -164,6 +154,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     monthlySummary,
     dailySummaries,
     getSummaryForDate,
+    remainingTodayBudget,
   ]);
 
   const uiValue = useMemo<LedgerUIContextType>(() => {
@@ -191,24 +182,11 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function useLedgerData(): LedgerDataContextType {
-  const context = useContext(LedgerDataContext);
-  if (!context) {
-    throw new Error('useLedgerData must be used within a LedgerProvider');
-  }
-  return context;
-}
-
-export function useLedgerUI(): LedgerUIContextType {
-  const context = useContext(LedgerUIContext);
-  if (!context) {
-    throw new Error('useLedgerUI must be used within a LedgerProvider');
-  }
-  return context;
-}
-
 export function useLedger(): LedgerContextType {
-  const data = useLedgerData();
-  const ui = useLedgerUI();
+  const data = useContext(LedgerDataContext);
+  const ui = useContext(LedgerUIContext);
+  if (!data || !ui) {
+    throw new Error('useLedger must be used within a LedgerProvider');
+  }
   return useMemo(() => ({ ...data, ...ui }), [data, ui]);
 }
