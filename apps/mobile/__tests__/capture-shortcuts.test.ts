@@ -18,7 +18,7 @@ describe('Android capture shortcuts plugin', () => {
     expect(plugin.CAPTURE_SHORTCUTS.length).toBeLessThanOrEqual(4);
   });
 
-  it.each(CAPTURE_KINDS)('generates a VIEW intent for %s that targets the app and deep link', (kind) => {
+  it.each(CAPTURE_KINDS)('generates a VIEW intent and App Actions binding for %s', (kind) => {
     const xml: string = plugin.buildShortcutsXml(PKG);
 
     expect(xml).toContain(`android:shortcutId="capture_${kind}"`);
@@ -28,15 +28,31 @@ describe('Android capture shortcuts plugin', () => {
     expect(xml).toContain(`android:targetClass="${PKG}.MainActivity"`);
     expect(xml).toContain(`@string/carenta_shortcut_${kind}_short`);
     expect(xml).toContain(`@string/carenta_shortcut_${kind}_long`);
+    expect(xml).toContain(`@array/carenta_shortcut_${kind}_synonyms`);
   });
 
-  it('emits well-formed XML with exactly one <shortcut> per kind', () => {
+  it('emits well-formed XML with App Actions OPEN_APP_FEATURE capability and shortcuts', () => {
     const xml: string = plugin.buildShortcutsXml(PKG);
 
     expect(xml.startsWith('<?xml version="1.0" encoding="utf-8"?>')).toBe(true);
-    expect(xml.match(/<shortcut\b/g)).toHaveLength(CAPTURE_KINDS.length);
+    expect(xml).toContain(`<capability android:name="${plugin.OPEN_FEATURE_INTENT}">`);
+    expect(xml).toContain('<shortcut-fulfillment>');
+    expect(xml).toContain('<parameter android:name="feature" />');
+    expect(xml.match(/<capability-binding\b/g)).toHaveLength(CAPTURE_KINDS.length);
+    expect(xml.match(/<shortcut\s/g)).toHaveLength(CAPTURE_KINDS.length);
     expect(xml.match(/<\/shortcut>/g)).toHaveLength(CAPTURE_KINDS.length);
     expect(xml.trim().endsWith('</shortcuts>')).toBe(true);
+  });
+
+  it('generates voice-trigger synonym string arrays for each capture kind', () => {
+    const arraysXml: string = plugin.buildShortcutArraysXml();
+
+    expect(arraysXml.startsWith('<?xml version="1.0" encoding="utf-8"?>')).toBe(true);
+    for (const kind of CAPTURE_KINDS) {
+      expect(arraysXml).toContain(`<string-array name="carenta_shortcut_${kind}_synonyms">`);
+    }
+    expect(arraysXml.match(/<string-array\b/g)).toHaveLength(CAPTURE_KINDS.length);
+    expect(arraysXml.trim().endsWith('</resources>')).toBe(true);
   });
 
   it('adds the shortcuts meta-data to the activity exactly once', () => {

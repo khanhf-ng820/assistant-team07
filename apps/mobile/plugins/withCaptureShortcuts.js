@@ -1,10 +1,11 @@
 /**
- * Expo config plugin: Android static app shortcuts for quick expense capture
- * (issue #53). Long-pressing the launcher icon shows one shortcut per capture
- * kind; each opens `carenta://capture/<kind>`.
+ * Expo config plugin: Android static app shortcuts and Google Assistant
+ * App Actions capability bindings for quick expense capture (issue #53).
+ * Long-pressing the launcher icon shows one shortcut per capture kind, and
+ * `actions.intent.OPEN_APP_FEATURE` binds voice queries to `carenta://capture/<kind>`.
  *
- * Shortcuts are static (declared at build time), so they only exist in a
- * development build or an installed APK, not in Expo Go.
+ * Shortcuts and capabilities are static (declared at build time), so they only
+ * exist in a development build or an installed APK, not in Expo Go.
  *
  * Keep CAPTURE_SHORTCUTS in sync with `src/capture/routes.ts`
  * (`__tests__/capture-shortcuts.test.ts` fails if they drift).
@@ -20,14 +21,32 @@ const {
 
 const SCHEME = 'carenta';
 const SHORTCUTS_RESOURCE = 'carenta_shortcuts';
+const ARRAYS_RESOURCE = 'carenta_shortcut_arrays';
+const OPEN_FEATURE_INTENT = 'actions.intent.OPEN_APP_FEATURE';
 
 const CAPTURE_SHORTCUTS = [
-  { kind: 'ocr', short: 'Quét hóa đơn', long: 'Quét hóa đơn để ghi chi tiêu' },
-  { kind: 'voice', short: 'Ghi âm', long: 'Ghi chi tiêu bằng giọng nói' },
-  { kind: 'manual', short: 'Nhập tay', long: 'Nhập giao dịch thủ công' },
+  {
+    kind: 'ocr',
+    short: 'Quét hóa đơn',
+    long: 'Quét hóa đơn để ghi chi tiêu',
+    synonyms: ['Quét hóa đơn', 'Chụp hóa đơn', 'Scan receipt'],
+  },
+  {
+    kind: 'voice',
+    short: 'Ghi âm',
+    long: 'Ghi chi tiêu bằng giọng nói',
+    synonyms: ['Ghi âm', 'Ghi chi tiêu bằng giọng nói', 'Voice expense'],
+  },
+  {
+    kind: 'manual',
+    short: 'Nhập tay',
+    long: 'Nhập giao dịch thủ công',
+    synonyms: ['Nhập tay', 'Nhập thủ công', 'Manual expense'],
+  },
 ];
 
 const stringName = (kind, variant) => `carenta_shortcut_${kind}_${variant}`;
+const arrayName = (kind) => `carenta_shortcut_${kind}_synonyms`;
 
 function requirePackage(config) {
   const pkg = config.android && config.android.package;
@@ -37,14 +56,29 @@ function requirePackage(config) {
   return pkg;
 }
 
-/** Contents of res/xml/carenta_shortcuts.xml. */
+/** Contents of res/xml/carenta_shortcuts.xml including App Actions capability. */
 function buildShortcutsXml(pkg) {
+  const capability = `  <capability android:name="${OPEN_FEATURE_INTENT}">
+    <shortcut-fulfillment>
+      <parameter android:name="feature" />
+    </shortcut-fulfillment>
+    <intent
+      android:action="android.intent.action.VIEW"
+      android:targetPackage="${pkg}"
+      android:targetClass="${pkg}.MainActivity" />
+  </capability>`;
+
   const items = CAPTURE_SHORTCUTS.map(
     ({ kind }) => `  <shortcut
     android:shortcutId="capture_${kind}"
     android:enabled="true"
     android:shortcutShortLabel="@string/${stringName(kind, 'short')}"
     android:shortcutLongLabel="@string/${stringName(kind, 'long')}">
+    <capability-binding android:key="${OPEN_FEATURE_INTENT}">
+      <parameter-binding
+        android:key="feature"
+        android:value="@array/${arrayName(kind)}" />
+    </capability-binding>
     <intent
       android:action="android.intent.action.VIEW"
       android:data="${SCHEME}://capture/${kind}"
@@ -55,8 +89,23 @@ function buildShortcutsXml(pkg) {
 
   return `<?xml version="1.0" encoding="utf-8"?>
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+${capability}
 ${items}
 </shortcuts>
+`;
+}
+
+/** Contents of res/values/carenta_shortcut_arrays.xml for inline voice synonyms. */
+function buildShortcutArraysXml() {
+  const arrays = CAPTURE_SHORTCUTS.map(({ kind, synonyms }) => {
+    const entries = synonyms.map((label) => `    <item>${label}</item>`).join('\n');
+    return `  <string-array name="${arrayName(kind)}">\n${entries}\n  </string-array>`;
+  }).join('\n');
+
+  return `<?xml version="1.0" encoding="utf-8"?>
+<resources>
+${arrays}
+</resources>
 `;
 }
 
@@ -103,9 +152,13 @@ function withCaptureShortcuts(config) {
   config = withDangerousMod(config, [
     'android',
     async (cfg) => {
-      const dir = path.join(cfg.modRequest.platformProjectRoot, 'app', 'src', 'main', 'res', 'xml');
-      await fs.promises.mkdir(dir, { recursive: true });
-      await fs.promises.writeFile(path.join(dir, `${SHORTCUTS_RESOURCE}.xml`), buildShortcutsXml(pkg));
+      const resDir = path.join(cfg.modRequest.platformProjectRoot, 'app', 'src', 'main', 'res');
+      const xmlDir = path.join(resDir, 'xml');
+      const valuesDir = path.join(resDir, 'values');
+      await fs.promises.mkdir(xmlDir, { recursive: true });
+      await fs.promises.mkdir(valuesDir, { recursive: true });
+      await fs.promises.writeFile(path.join(xmlDir, `${SHORTCUTS_RESOURCE}.xml`), buildShortcutsXml(pkg));
+      await fs.promises.writeFile(path.join(valuesDir, `${ARRAYS_RESOURCE}.xml`), buildShortcutArraysXml());
       return cfg;
     },
   ]);
@@ -115,5 +168,7 @@ function withCaptureShortcuts(config) {
 
 module.exports = withCaptureShortcuts;
 module.exports.CAPTURE_SHORTCUTS = CAPTURE_SHORTCUTS;
+module.exports.OPEN_FEATURE_INTENT = OPEN_FEATURE_INTENT;
 module.exports.buildShortcutsXml = buildShortcutsXml;
+module.exports.buildShortcutArraysXml = buildShortcutArraysXml;
 module.exports.addShortcutsMetaData = addShortcutsMetaData;
