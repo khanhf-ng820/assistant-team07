@@ -166,33 +166,40 @@ The app registers the `carenta://` scheme and three entry points:
 | `carenta://capture/manual` | manual entry |
 
 Only these three kinds are accepted (`src/capture/routes.ts`). Any other kind
-(`carenta://capture/anything`) redirects to the home tab; a link or query string can
-never choose another screen. The routes are **entry points only**: until the OCR,
-voice and manual screens from their own issues land, each shows **Chưa triển khai**
-and records nothing. To connect a finished screen, replace the body of the matching
-`app/capture/<kind>.tsx`.
+(`carenta://capture/anything`) or unmatched route (`app/+not-found.tsx`)
+redirects to the home tab; a link or query string can never choose another screen.
+`carenta://capture/manual` opens the root `ManualEntryModal` (from #45). The
+`ocr` and `voice` routes remain **entry points only** (`Chưa triển khai`, recording
+nothing) until the OCR (#48) and voice (#49) screens land; to connect one,
+replace the body of the matching `app/capture/<kind>.tsx`.
 
-**Android shortcuts.** `plugins/withCaptureShortcuts.js` adds three static launcher
-shortcuts (long-press the app icon) that open the links above. Static shortcuts
-exist only in a development build or an installed APK, **not in Expo Go**. They need
-`android.package` (`com.carenta.app`) in `app.config.ts`. Generate and inspect the
-native files with `npx expo prebuild --platform android --no-install`
-(`android/` is ignored by Git; discard it and any `package.json` script changes
-that prebuild makes).
+**Android shortcuts & external voice hooks.** `plugins/withCaptureShortcuts.js`
+adds three static launcher shortcuts (long-press the app icon) plus an
+`actions.intent.OPEN_APP_FEATURE` App Actions capability (`<shortcut-fulfillment>`
+and `<capability-binding>` backed by `res/values/carenta_shortcut_arrays.xml`)
+that map to `carenta://capture/{ocr,voice,manual}`. Static shortcuts and App
+Actions declarations exist only in a development build or an installed APK,
+**not in Expo Go**. They require `android.package` (`com.carenta.app`) in
+`app.config.ts`. Generate and inspect the native files with
+`npx expo prebuild --platform android --no-install` (`android/` is ignored by Git;
+discard it and any `package.json` script changes that prebuild makes).
 
-**Voice assistant.** Android can offer an app's static shortcuts to Google Assistant,
-but that hand-off has **not been tested** on a device. No assistant-specific
-(App Actions) capability is declared yet; treat the external voice trigger as
-unverified until it is tried on a phone.
+**Voice assistant.** While the `OPEN_APP_FEATURE` capability and shortcut bindings
+are generated in XML and checked by Jest, Google Assistant hand-off has
+**not been tested** on a physical Android device or App Actions Test Tool. Treat
+the external voice trigger as unverified on device until tested in an installed
+development build.
 
 ### Test the deep links
 
-Automated: `npm test` (route allowlist, route rendering, redirect of unknown kinds,
-shortcut XML and manifest edits).
+Automated: `npm test` (route allowlist, `manual` deep-link to `ManualEntryModal`
+flow and timed save check, `ocr`/`voice` placeholder rendering, redirect of
+unknown kinds/paths, App Actions XML/array generation, and manifest edits).
 
 On a device or emulator with a development build installed:
 
 ```sh
+adb shell am start -a android.intent.action.VIEW -d "carenta://capture/manual"
 adb shell am start -a android.intent.action.VIEW -d "carenta://capture/voice"
 adb shell am start -a android.intent.action.VIEW -d "carenta://capture/unknown"   # should land on Thống kê
 ```
@@ -207,12 +214,13 @@ Two parts, because a script cannot drive the phone:
    `python scripts/measure_capture_latency.py --base-url http://127.0.0.1:8000 --runs 20`.
    It posts synthetic transactions (note `latency-probe`) to `POST /v1/transactions`,
    prints min/median/p95/max, and exits 1 if any run exceeds 5 seconds. Run it only
-   against a local development API. It needs the transactions endpoint from the
-   budget-engine PR (#60).
+   against a local development API. Verified on 2026-11-25 against local Uvicorn
+   (20 runs: min `0.0149s`, median `0.0155s`, p95 `0.021s`, max `0.0429s` — PASS).
 2. **Whole interaction (manual).** On a phone, start a stopwatch when you tap the
    shortcut and stop it when the saved transaction appears. Repeat at least 10 times
-   and record the slowest. This can only be done once the capture screens exist; do not
-   count fixture or replayed data as OCR/voice evidence.
+   and record the slowest. Automated mobile Jest timing covers `carenta://capture/manual`
+   deep-link dispatch to local save (`__tests__/capture-latency.test.tsx`); physical
+   device timing for OCR/voice waits on #48/#49/#50.
 
 ## Checks
 
