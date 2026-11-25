@@ -643,6 +643,12 @@ export function createCarentaRuntime(options: CarentaRuntimeOptions): CarentaRun
     const allowRetry = config.allowRetryOn401 ?? authenticated;
     const startEpoch = sessionEpoch;
 
+    function assertRequestActive() {
+      if (config.signal?.aborted || (authenticated && sessionEpoch !== startEpoch)) {
+        throw createAbortedError();
+      }
+    }
+
     async function sendOnce(tokenOverride?: string): Promise<HttpResponse> {
       const headers: Record<string, string> = {
         Accept: 'application/json',
@@ -659,7 +665,7 @@ export function createCarentaRuntime(options: CarentaRuntimeOptions): CarentaRun
       }
 
       try {
-        return await transport.send({
+        const res = await transport.send({
           url: `${cleanBaseUrl}${path}`,
           method: config.method ?? 'GET',
           headers,
@@ -667,7 +673,10 @@ export function createCarentaRuntime(options: CarentaRuntimeOptions): CarentaRun
           timeoutMs: config.timeoutMs ?? defaultTimeout,
           signal: config.signal,
         });
+        assertRequestActive();
+        return res;
       } catch (err) {
+        assertRequestActive();
         throw isApiError(err) ? localizeTransportError(err, 'backend') : err;
       }
     }
@@ -689,24 +698,30 @@ export function createCarentaRuntime(options: CarentaRuntimeOptions): CarentaRun
         retryToken = currentSession.accessToken;
       } else {
         const outcome = await runSingleFlightRefresh(activeRefreshToken, startEpoch);
-        if (config.signal?.aborted) {
-          throw createAbortedError();
-        }
-        if (outcome.ok) {
-          retryToken = outcome.session.accessToken;
-        } else if (sessionEpoch === startEpoch) {
+        if (!outcome.ok) {
           if (outcome.retryable) {
+            assertRequestActive();
             throw outcome.error;
           }
-          await signOut();
+          if (config.signal?.aborted) {
+            throw createAbortedError();
+          }
+          if (sessionEpoch === startEpoch) {
+            await signOut();
+          }
+          throw normalizeHttpError(
+            response.status,
+            response.body.ok ? response.body.data : undefined,
+            response.requestId
+          );
         }
+        assertRequestActive();
+        retryToken = outcome.session.accessToken;
       }
 
-      if (config.signal?.aborted) {
-        throw createAbortedError();
-      }
+      assertRequestActive();
 
-      if (retryToken && sessionEpoch === startEpoch) {
+      if (retryToken) {
         response = await sendOnce(retryToken);
       }
     }

@@ -1141,17 +1141,15 @@ describe('CarentaRuntime private (Student Identity, sessionEpoch) Offline Fallba
     });
   });
 
-  it('blocks slow GET from earlier epoch from poisoning same-user re-sign-in cache', async () => {
-    const session1 = makeSession({ accessToken: 'jwt-1' });
-    const session2 = makeSession({ accessToken: 'jwt-2' });
-    const storage = createMemorySessionStorage(session1);
-
-    let resolveSlowGet!: (res: Response) => void;
+  function createDeferredReadRuntime(initialSession: AuthSession, signInSession: AuthSession) {
+    const storage = createMemorySessionStorage(initialSession);
+    let resolvePending!: (res: Response) => void;
     let offline = false;
+
     const fetchMock = jest.fn(() => {
       if (offline) return Promise.reject(new TypeError('Offline'));
       return new Promise<Response>((resolve) => {
-        resolveSlowGet = resolve;
+        resolvePending = resolve;
       });
     });
 
@@ -1161,8 +1159,8 @@ describe('CarentaRuntime private (Student Identity, sessionEpoch) Offline Fallba
         kind: 'authenticated',
         storage,
         authGateway: {
-          signInWithPassword: jest.fn(async () => session2),
-          refreshSession: jest.fn(async () => session2),
+          signInWithPassword: jest.fn(async () => signInSession),
+          refreshSession: jest.fn(async () => signInSession),
           signOut: jest.fn(async () => {}),
         },
       },
@@ -1170,19 +1168,84 @@ describe('CarentaRuntime private (Student Identity, sessionEpoch) Offline Fallba
       now: () => 1_700_000_000_000,
     });
 
+    return {
+      runtime,
+      resolvePending: (res: Response) => resolvePending(res),
+      setOffline: (next: boolean) => {
+        offline = next;
+      },
+    };
+  }
+
+  it('cancels slow GET from earlier epoch after sign-out/re-sign-in and blocks cache poisoning', async () => {
+    const session1 = makeSession({ accessToken: 'jwt-1' });
+    const session2 = makeSession({ accessToken: 'jwt-2' });
+    const { runtime, resolvePending, setOffline } = createDeferredReadRuntime(session1, session2);
+
     await runtime.restore();
 
     const inflightRead = runtime.apiClient.getBudgetSummary();
     await runtime.signOut();
     await runtime.signIn('sv@hcmus.edu.vn', 'secret');
 
-    resolveSlowGet(jsonResponse(sampleBudgetSummary));
-    await inflightRead;
+    resolvePending(jsonResponse(sampleBudgetSummary));
+    await expect(inflightRead).rejects.toMatchObject({
+      code: 'ABORTED',
+      retryable: false,
+    });
 
-    offline = true;
+    setOffline(true);
     await expect(runtime.apiClient.getBudgetSummary()).rejects.toMatchObject({
       code: 'NETWORK_UNAVAILABLE',
       retryable: true,
     });
+  });
+
+  it('rejects stale Student A responses after switching to Student B before parsing and leaves unauthenticated checkHealth unaffected', async () => {
+    const sessionA = makeSession({
+      accessToken: 'jwt-a',
+      user: { id: 'user-a', email: 'a@edu.vn', role: 'authenticated' },
+    });
+    const sessionB = makeSession({
+      accessToken: 'jwt-b',
+      user: { id: 'user-b', email: 'b@edu.vn', role: 'authenticated' },
+    });
+    const { runtime, resolvePending, setOffline } = createDeferredReadRuntime(sessionA, sessionB);
+
+    await runtime.restore();
+
+    // 1. Student A starts getBudgetSummary(), then switches to Student B before it resolves
+    const inflightStudentA = runtime.apiClient.getBudgetSummary();
+    await runtime.signOut();
+    await runtime.signIn('b@edu.vn', 'secret');
+
+    resolvePending(jsonResponse({ ...sampleBudgetSummary, cash: 9_999_999 }));
+    await expect(inflightStudentA).rejects.toMatchObject({
+      code: 'ABORTED',
+      retryable: false,
+    });
+
+    // Offline cache must remain empty for Student B
+    setOffline(true);
+    await expect(runtime.apiClient.getBudgetSummary()).rejects.toMatchObject({
+      code: 'NETWORK_UNAVAILABLE',
+      retryable: true,
+    });
+    setOffline(false);
+
+    // 2. Stale authenticated responses are rejected BEFORE schema parsing (not UNEXPECTED_RESPONSE)
+    const inflightStudentB = runtime.apiClient.getAuthMe();
+    await runtime.signOut();
+    resolvePending(jsonResponse({ invalid: true }));
+    await expect(inflightStudentB).rejects.toMatchObject({
+      code: 'ABORTED',
+      retryable: false,
+    });
+
+    // 3. Unauthenticated health probe stays unaffected by session changes
+    const inflightHealth = runtime.apiClient.checkHealth();
+    await runtime.signIn('b@edu.vn', 'secret');
+    resolvePending(jsonResponse({ status: 'ok', service: 'carenta-api' }));
+    await expect(inflightHealth).resolves.toEqual({ status: 'ok', service: 'carenta-api' });
   });
 });
