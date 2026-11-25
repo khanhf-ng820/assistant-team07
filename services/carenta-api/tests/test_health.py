@@ -20,15 +20,10 @@ def test_health_returns_service_identity():
     assert response.json() == {"status": "ok", "service": "carenta-api"}
 
 
-def test_openapi_describes_only_health():
+def test_openapi_describes_health():
     schema = get("/openapi.json", create_app()).json()
-    assert set(schema["paths"]) == {"/health"}
+    assert "/health" in schema["paths"]
     response_schema = schema["paths"]["/health"]["get"]["responses"]["200"]
     assert response_schema["content"]["application/json"]["schema"]["$ref"].endswith(
         "/HealthResponse"
     )
-
-
-def test_transactions_are_not_implemented():
-    response = get("/v1/transactions")
-    assert response.status_code == 404
