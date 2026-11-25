@@ -1,6 +1,15 @@
-import React from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import {
+  Animated,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { CaptureMethod, useCapture } from '../context/CaptureContext';
 import { useLedger } from '../context/LedgerContext';
 import { colors, type } from '../theme';
 
@@ -8,24 +17,98 @@ interface CaptureChooserProps {
   visible: boolean;
   onClose: () => void;
   onManualSelect?: () => void;
+  onSelectManual?: () => void;
+  onSelectOcr?: () => void;
+  onSelectVoice?: () => void;
+  onSelectMethod?: (method: CaptureMethod) => void;
 }
 
-export function CaptureChooser({ visible, onClose, onManualSelect }: CaptureChooserProps) {
-  let openManualEntryFromContext: (() => void) | undefined;
+export function CaptureChooser({
+  visible,
+  onClose,
+  onManualSelect,
+  onSelectManual,
+  onSelectOcr,
+  onSelectVoice,
+  onSelectMethod,
+}: CaptureChooserProps) {
+  let startCaptureFromContext: ((method: CaptureMethod) => Promise<void>) | undefined;
+  let openManualFromLedger: (() => void) | undefined;
+
   try {
-    // Safe lookup if rendered within LedgerProvider
-    const ledger = useLedger();
-    openManualEntryFromContext = ledger.openManualEntry;
+    const capture = useCapture();
+    startCaptureFromContext = capture.startCapture;
   } catch {
-    // Graceful fallback when rendered in isolated test environments
+    // Graceful fallback when rendered in isolated component tests without CaptureProvider
   }
 
-  const handleManualPress = () => {
+  try {
+    const ledger = useLedger();
+    openManualFromLedger = ledger.openManualEntry;
+  } catch {
+    // Graceful fallback when rendered in isolated component tests without LedgerProvider
+  }
+
+  const fadeAnim = useRef(new Animated.Value(visible ? 1 : 0)).current;
+  const slideAnim = useRef(new Animated.Value(visible ? 0 : 20)).current;
+
+  useEffect(() => {
+    if (visible) {
+      fadeAnim.setValue(0);
+      slideAnim.setValue(20);
+      const animation = Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 180,
+          useNativeDriver: true,
+        }),
+        Animated.timing(slideAnim, {
+          toValue: 0,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+      ]);
+      animation.start();
+      return () => animation.stop();
+    } else {
+      fadeAnim.setValue(0);
+      slideAnim.setValue(20);
+    }
+  }, [fadeAnim, slideAnim, visible]);
+
+  const handleSelect = (method: CaptureMethod) => {
     onClose();
-    if (onManualSelect) {
-      onManualSelect();
-    } else if (openManualEntryFromContext) {
-      openManualEntryFromContext();
+
+    if (onSelectMethod) {
+      onSelectMethod(method);
+      return;
+    }
+
+    if (method === 'manual') {
+      const manualCallback = onSelectManual || onManualSelect;
+      if (manualCallback) {
+        manualCallback();
+      } else if (startCaptureFromContext) {
+        void startCaptureFromContext('manual');
+      } else if (openManualFromLedger) {
+        openManualFromLedger();
+      }
+      return;
+    }
+
+    if (method === 'ocr') {
+      if (onSelectOcr) {
+        onSelectOcr();
+      } else if (startCaptureFromContext) {
+        void startCaptureFromContext('ocr');
+      }
+      return;
+    }
+
+    if (onSelectVoice) {
+      onSelectVoice();
+    } else if (startCaptureFromContext) {
+      void startCaptureFromContext('voice');
     }
   };
 
@@ -37,83 +120,123 @@ export function CaptureChooser({ visible, onClose, onManualSelect }: CaptureChoo
       animationType="fade"
       onRequestClose={onClose}
     >
-      <SafeAreaView style={styles.overlay}>
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <View accessibilityViewIsModal style={styles.sheet}>
-            <Text accessibilityRole="header" style={styles.heading}>
-              Chọn cách ghi giao dịch
-            </Text>
-            <Text style={styles.body}>
-              Chọn phương thức để ghi nhận khoản chi tiêu mới.
-            </Text>
+      <Animated.View style={[styles.backdropContainer, { opacity: fadeAnim }]}>
+        <SafeAreaView style={styles.overlay}>
+          {/* Dismiss on outside backdrop tap */}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Đóng lớp phủ"
+            onPress={onClose}
+            style={StyleSheet.absoluteFill}
+            testID="capture-backdrop"
+          />
 
-            {/* Manual Entry Option */}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Nhập thủ công"
-              style={({ pressed }) => [styles.option, styles.optionActive, pressed && styles.pressed]}
-              onPress={handleManualPress}
-              testID="capture-option-manual"
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            <Animated.View
+              accessibilityViewIsModal
+              style={[
+                styles.sheet,
+                { transform: [{ translateY: slideAnim }] },
+              ]}
             >
-              <View style={styles.optionHeader}>
-                <Text style={styles.optionIcon}>✍️</Text>
-                <Text style={styles.method}>Nhập thủ công</Text>
-              </View>
-              <Text style={styles.subtext}>
-                Nhập số tiền bằng bàn phím số chuyển khoản ngân hàng
+              <Text accessibilityRole="header" style={styles.heading}>
+                Chọn cách ghi giao dịch
               </Text>
-            </Pressable>
+              <Text style={styles.body}>
+                Chọn phương thức để ghi nhận khoản chi tiêu mới.
+              </Text>
 
-            {/* OCR Option (Phase 2) */}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Quét hóa đơn — Chưa triển khai"
-              accessibilityState={{ disabled: true }}
-              disabled
-              style={[styles.option, styles.optionDisabled]}
-            >
-              <View style={styles.optionHeader}>
-                <Text style={styles.optionIcon}>📷</Text>
-                <Text style={styles.methodDisabled}>Quét hóa đơn</Text>
-              </View>
-              <Text style={styles.subtextDisabled}>Chưa triển khai (Phase 2)</Text>
-            </Pressable>
+              {/* Manual Entry Option */}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Nhập thủ công"
+                style={({ pressed }) => [
+                  styles.option,
+                  styles.optionActive,
+                  pressed && styles.pressed,
+                ]}
+                onPress={() => handleSelect('manual')}
+                testID="capture-option-manual"
+              >
+                <View style={styles.optionHeader}>
+                  <Text style={styles.optionIcon}>✍️</Text>
+                  <Text style={styles.method}>Nhập thủ công</Text>
+                </View>
+                <Text style={styles.subtext}>
+                  Nhập số tiền bằng bàn phím số chuyển khoản ngân hàng
+                </Text>
+              </Pressable>
 
-            {/* Voice Option (Phase 2) */}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Ghi âm — Chưa triển khai"
-              accessibilityState={{ disabled: true }}
-              disabled
-              style={[styles.option, styles.optionDisabled]}
-            >
-              <View style={styles.optionHeader}>
-                <Text style={styles.optionIcon}>🎙️</Text>
-                <Text style={styles.methodDisabled}>Ghi âm</Text>
-              </View>
-              <Text style={styles.subtextDisabled}>Chưa triển khai (Phase 2)</Text>
-            </Pressable>
+              {/* OCR Receipt Scan Option */}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Quét hóa đơn"
+                style={({ pressed }) => [
+                  styles.option,
+                  styles.optionActive,
+                  pressed && styles.pressed,
+                ]}
+                onPress={() => handleSelect('ocr')}
+                testID="capture-option-ocr"
+              >
+                <View style={styles.optionHeader}>
+                  <Text style={styles.optionIcon}>📷</Text>
+                  <Text style={styles.method}>Quét hóa đơn</Text>
+                </View>
+                <Text style={styles.subtext}>
+                  Chụp hóa đơn hoặc chọn ảnh chuyển khoản từ thư viện
+                </Text>
+              </Pressable>
 
-            {/* Close Button */}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Đóng lựa chọn"
-              onPress={onClose}
-              style={({ pressed }) => [styles.close, pressed && styles.pressed]}
-            >
-              <Text style={styles.closeText}>Đóng</Text>
-            </Pressable>
-          </View>
-        </ScrollView>
-      </SafeAreaView>
+              {/* Voice Capture Option */}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Ghi âm"
+                style={({ pressed }) => [
+                  styles.option,
+                  styles.optionActive,
+                  pressed && styles.pressed,
+                ]}
+                onPress={() => handleSelect('voice')}
+                testID="capture-option-voice"
+              >
+                <View style={styles.optionHeader}>
+                  <Text style={styles.optionIcon}>🎙️</Text>
+                  <Text style={styles.method}>Ghi âm</Text>
+                </View>
+                <Text style={styles.subtext}>
+                  Nói nhanh khoản chi bằng tiếng Việt (tối đa 30 giây)
+                </Text>
+              </Pressable>
+
+              {/* Close Button (>= 48dp touch target) */}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Đóng lựa chọn"
+                onPress={onClose}
+                style={({ pressed }) => [styles.close, pressed && styles.pressed]}
+                testID="capture-close-button"
+              >
+                <Text style={styles.closeText}>Đóng</Text>
+              </Pressable>
+            </Animated.View>
+          </ScrollView>
+        </SafeAreaView>
+      </Animated.View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
+  backdropContainer: {
+    flex: 1,
+    backgroundColor: colors.overlayBackdropDark,
+  },
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.5)',
     padding: 24,
   },
   scrollContent: {
@@ -125,7 +248,7 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     padding: 24,
     gap: 16,
-    shadowColor: '#0F172A',
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.15,
     shadowRadius: 20,
@@ -149,11 +272,7 @@ const styles = StyleSheet.create({
   },
   optionActive: {
     borderColor: colors.primary,
-    backgroundColor: '#F0FDFA',
-  },
-  optionDisabled: {
-    backgroundColor: '#F8FAFC',
-    borderColor: '#E2E8F0',
+    backgroundColor: colors.primaryTint,
   },
   optionHeader: {
     flexDirection: 'row',
@@ -168,18 +287,9 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 15,
   },
-  methodDisabled: {
-    ...type.body,
-    fontWeight: '600',
-    color: colors.subtle,
-  },
   subtext: {
     ...type.caption,
     color: colors.muted,
-  },
-  subtextDisabled: {
-    ...type.caption,
-    color: colors.subtle,
   },
   close: {
     minHeight: 48,

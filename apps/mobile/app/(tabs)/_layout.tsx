@@ -2,10 +2,23 @@ import { Tabs, type BottomTabBarProps } from 'expo-router/js-tabs';
 import { Fragment, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { CaptureChooser } from '../../src/components/CaptureChooser';
+import { useCapture } from '../../src/context/CaptureContext';
 import { colors, type } from '../../src/theme';
 
 function TemplateTabBar({ state, descriptors, emitter, navigateToTab, insets }: BottomTabBarProps) {
   const [captureOpen, setCaptureOpen] = useState(false);
+
+  let isCaptureBusy = false;
+  try {
+    isCaptureBusy = useCapture().isCaptureBusy;
+  } catch {
+    // Graceful fallback if rendered outside CaptureProvider
+  }
+
+  const handleOpenChooser = () => {
+    if (isCaptureBusy) return;
+    setCaptureOpen(true);
+  };
 
   return (
     <>
@@ -33,7 +46,14 @@ function TemplateTabBar({ state, descriptors, emitter, navigateToTab, insets }: 
                 <Text style={[styles.tabText, { color }]}>{label}</Text>
               </Pressable>
               {index === 0 ? (
-                <Pressable accessibilityRole="button" accessibilityLabel="Thêm giao dịch" style={styles.plus} onPress={() => setCaptureOpen(true)}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Thêm giao dịch"
+                  accessibilityState={{ disabled: isCaptureBusy }}
+                  disabled={isCaptureBusy}
+                  style={styles.plus}
+                  onPress={handleOpenChooser}
+                >
                   <Text style={styles.plusText}>+</Text>
                 </Pressable>
               ) : null}
