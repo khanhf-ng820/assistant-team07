@@ -45,13 +45,16 @@ def summarize(samples: list[float], limit: float = LIMIT_SECONDS) -> dict:
     }
 
 
+LOCAL_TZ = dt.timezone(dt.timedelta(hours=7))
+
+
 def post_transaction(base_url: str, timeout: float) -> float:
     """Create one synthetic expense and return the elapsed seconds."""
     payload = {
         "amount": 1000,
         "kind": "expense",
         "category": "latency-probe",
-        "date": dt.date.today().isoformat(),
+        "date": dt.datetime.now(LOCAL_TZ).date().isoformat(),
         "note": "latency-probe",
         "idempotency_key": f"latency-{uuid.uuid4()}",
     }

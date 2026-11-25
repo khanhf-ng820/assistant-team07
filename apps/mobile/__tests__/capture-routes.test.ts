@@ -27,8 +27,9 @@ describe('capture route allowlist', () => {
 });
 
 describe('parseCaptureDeepLink', () => {
-  it('ignores a trailing slash, query string and fragment', () => {
+  it('ignores a trailing slash, query string, fragment, and scheme casing', () => {
     expect(parseCaptureDeepLink('carenta://capture/voice/')).toBe('voice');
+    expect(parseCaptureDeepLink('CARENTA://capture/voice')).toBe('voice');
     expect(parseCaptureDeepLink('carenta://capture/ocr?source=shortcut')).toBe('ocr');
     expect(parseCaptureDeepLink('carenta://capture/manual#top')).toBe('manual');
     expect(parseCaptureDeepLink('  carenta://capture/voice  ')).toBe('voice');

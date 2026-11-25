@@ -56,7 +56,13 @@ it('opens ManualEntryModal from carenta://capture/manual and restores home on ba
   expect(screen.getByRole('tab', { name: 'Thống kê' })).toBeSelected();
 });
 
-it.each(['/capture/unknown', '/capture/OCR', '/capture/camera', '/evil/capture/voice'])(
+it.each([
+  '/capture/unknown',
+  '/capture/OCR',
+  '/capture/camera',
+  '/capture/voice/extra',
+  '/evil/capture/voice',
+])(
   'redirects unknown or non-allowlisted target %s to home instead of opening a screen',
   async (url) => {
     await renderRouter(routes, { initialUrl: url });

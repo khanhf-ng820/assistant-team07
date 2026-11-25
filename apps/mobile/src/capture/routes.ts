@@ -33,8 +33,9 @@ export function captureDeepLink(kind: CaptureKind): string {
  * Query strings and fragments are ignored; they never select the target.
  */
 export function parseCaptureDeepLink(url: string): CaptureKind | null {
-  const match = /^carenta:\/\/capture\/([^/?#]+)\/?(?:[?#].*)?$/.exec(url.trim());
+  const match = /^([a-z][a-z0-9+.-]*):\/\/capture\/([^/?#]+)\/?(?:[?#].*)?$/i.exec(url.trim());
   if (!match) return null;
-  const kind = match[1];
+  const [, scheme, kind] = match;
+  if (scheme.toLowerCase() !== CAPTURE_SCHEME) return null;
   return isCaptureKind(kind) ? kind : null;
 }
