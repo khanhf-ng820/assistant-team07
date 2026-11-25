@@ -168,11 +168,21 @@ import { Toast } from '../components/Toast';
 Full-screen modal overlay for initiating expense entries:
 ```tsx
 import { CaptureChooser } from '../components/CaptureChooser';
+import { useLedger } from '../context/LedgerContext';
 
+// Pattern 1: Automatic LedgerContext integration (Issue #45)
+// When mounted inside LedgerProvider, CaptureChooser triggers ledger.openManualEntry() automatically.
 <CaptureChooser
   visible={isCaptureOpen}
   onClose={() => setIsCaptureOpen(false)}
-  onSelectManual={() => router.push('/manual-entry')} // Seamless Issue #45 integration
+/>
+
+// Pattern 2: Explicit manual handler or future deep-link navigation (Issue #53)
+<CaptureChooser
+  visible={isCaptureOpen}
+  onClose={() => setIsCaptureOpen(false)}
+  onSelectManual={() => router.push('/capture/manual')} // Issue #53 navigation
+  onSelectMethod={(method) => console.log('Selected capture method:', method)} // Observer
 />
 ```
 

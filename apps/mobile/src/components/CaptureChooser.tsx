@@ -20,6 +20,10 @@ export interface CaptureChooserProps {
   onClose: () => void;
   onSelectManual?: () => void;
   onManualSelect?: () => void;
+  /**
+   * Observer/telemetry callback fired when any capture method is tapped.
+   * Runs alongside the active manual handler (`onSelectManual` or `LedgerContext.openManualEntry`).
+   */
   onSelectMethod?: (method: CaptureMethodId) => void;
 }
 
@@ -110,7 +114,9 @@ export function CaptureChooser({
                     onPress={() => {
                       if (!isEnabled) return;
                       onClose();
+                      // Trigger manual entry handler (prop override or LedgerContext.openManualEntry)
                       manualHandler?.();
+                      // Notify method selection observer if registered
                       onSelectMethod?.(id);
                     }}
                   >

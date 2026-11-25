@@ -1,11 +1,21 @@
+"""CARENTA FastAPI entrypoint."""
+
 from __future__ import annotations
 
 import datetime as dt
 from typing import Literal, Optional
 
-from fastapi import APIRouter, FastAPI, HTTPException, Query, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from app.auth import (
+    AuthConfig,
+    AuthIdentity,
+    TokenVerifier,
+    load_auth_config,
+    make_current_identity_dependency,
+)
+from app.errors import register_error_handlers
 from app.repository import ActiveGoalExistsError, IdempotencyConflictError, repository
 from app.schemas import (
     BudgetSummaryResponse,
@@ -146,19 +156,38 @@ def create_router() -> APIRouter:
     return router
 
 
-def create_app() -> FastAPI:
+def create_app(
+    auth_config: AuthConfig | None = None,
+    token_verifier: TokenVerifier | None = None,
+) -> FastAPI:
     application = FastAPI(
         title="CARENTA Financial API",
         version="0.1.0",
         description="Deterministic budget calculation engine & FastAPI CRUD endpoints",
+    )
+    register_error_handlers(application)
+
+    resolved_config = auth_config or load_auth_config()
+    get_current_identity = make_current_identity_dependency(
+        resolved_config, verifier=token_verifier
     )
 
     @application.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
         return HealthResponse()
 
-    # Mount v1 router at both /api/v1 and /v1 for full interoperability
+    auth_router = APIRouter()
+
+    @auth_router.get("/auth/me", response_model=AuthIdentity)
+    def auth_me(
+        identity: AuthIdentity = Depends(get_current_identity),
+    ) -> AuthIdentity:
+        return identity
+
+    # Mount v1 routers at both /api/v1 and /v1 for full interoperability
     api_v1_router = create_router()
+    application.include_router(auth_router, prefix="/api/v1", tags=["auth"])
+    application.include_router(auth_router, prefix="/v1", tags=["auth"])
     application.include_router(api_v1_router, prefix="/api/v1", tags=["API v1"])
     application.include_router(api_v1_router, prefix="/v1", tags=["v1"])
 
