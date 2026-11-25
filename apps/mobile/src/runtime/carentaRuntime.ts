@@ -551,6 +551,17 @@ export function createCarentaRuntime(options: CarentaRuntimeOptions): CarentaRun
     }
   }
 
+  function finalizeSignedOut(errorMessage: string | null) {
+    currentSession = null;
+    restoreSettled = true;
+    commitSnapshot({
+      status: 'signed_out',
+      student: null,
+      error: errorMessage,
+      canRetryRestore: false,
+    });
+  }
+
   async function signOut(): Promise<void> {
     sessionEpoch += 1;
     offlineCache.clear();
@@ -568,14 +579,7 @@ export function createCarentaRuntime(options: CarentaRuntimeOptions): CarentaRun
     }
 
     if (options.authMode.kind === 'misconfigured') {
-      currentSession = null;
-      restoreSettled = true;
-      commitSnapshot({
-        status: 'signed_out',
-        student: null,
-        error: options.authMode.error,
-        canRetryRestore: false,
-      });
+      finalizeSignedOut(options.authMode.error);
       return;
     }
 
@@ -600,17 +604,43 @@ export function createCarentaRuntime(options: CarentaRuntimeOptions): CarentaRun
       return;
     }
 
-    currentSession = null;
-    restoreSettled = true;
-    commitSnapshot({
-      status: 'signed_out',
-      student: null,
-      error: null,
-      canRetryRestore: false,
-    });
+    finalizeSignedOut(null);
 
     if (previousToken) {
       await options.authMode.authGateway.signOut(previousToken);
+    }
+  }
+
+  async function invalidateRevokedSession(authErrorMessage: string | null): Promise<void> {
+    sessionEpoch += 1;
+    offlineCache.clear();
+    const invalidateEpoch = sessionEpoch;
+    const previousToken = currentSession?.accessToken;
+
+    // Immediately invalidate the dead session in memory so no request can reuse the revoked token
+    // even if keychain deletion fails concurrently.
+    currentSession = null;
+    restoreSettled = true;
+
+    let storageErrorMessage: string | null = null;
+    try {
+      await clearStorageSerialized();
+    } catch (err) {
+      storageErrorMessage = asStorageClearError(err).userMessage;
+    }
+
+    if (sessionEpoch !== invalidateEpoch) {
+      return;
+    }
+
+    finalizeSignedOut(storageErrorMessage ?? authErrorMessage);
+
+    if (previousToken && options.authMode.kind === 'authenticated') {
+      try {
+        await options.authMode.authGateway.signOut(previousToken);
+      } catch {
+        // Best-effort gateway sign-out for an already revoked session.
+      }
     }
   }
 
@@ -707,7 +737,9 @@ export function createCarentaRuntime(options: CarentaRuntimeOptions): CarentaRun
             throw createAbortedError();
           }
           if (sessionEpoch === startEpoch) {
-            await signOut();
+            await invalidateRevokedSession(
+              isApiError(outcome.error) ? outcome.error.userMessage : null
+            );
           }
           throw normalizeHttpError(
             response.status,

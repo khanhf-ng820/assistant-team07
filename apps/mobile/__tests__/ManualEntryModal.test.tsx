@@ -1,0 +1,121 @@
+import { fireEvent, render, screen } from '@testing-library/react-native';
+import React from 'react';
+import { GreetingHeader } from '../src/components/dashboard/GreetingHeader';
+import { ManualEntryModal } from '../src/components/manual-entry/ManualEntryModal';
+import { LedgerProvider } from '../src/context/LedgerContext';
+
+describe('ManualEntryModal', () => {
+  it('recalculates remaining budget badge using existing spending on selectedDate', async () => {
+    const onClose = jest.fn();
+
+    await render(
+      <LedgerProvider>
+        <ManualEntryModal visible onClose={onClose} />
+      </LedgerProvider>
+    );
+
+    expect(screen.getByText('Thêm khoản chi')).toBeTruthy();
+    expect(screen.getByText('SỐ TIỀN CHI TIÊU')).toBeTruthy();
+    expect(screen.getByTestId('amount-display-value')).toHaveTextContent('45.000');
+
+    // Default selectedDate is 2024-07-10 which already spent 290,000 ₫ against 280,000 ₫ daily limit (-10,000 - 45,000 = -55,000 ₫)
+    expect(screen.getByTestId('remaining-budget-badge')).toHaveTextContent(
+      'Vượt ngân sách 55.000 ₫ sau khoản chi này'
+    );
+
+    // Switch to 2024-07-09 (160,000 ₫ spent -> 120,000 ₫ prior remaining - 45,000 ₫ = 75,000 ₫ remaining)
+    await fireEvent.press(screen.getByTestId('manual-entry-prev-date'));
+    expect(screen.getByTestId('remaining-budget-badge')).toHaveTextContent(
+      'Còn 75.000 ₫ sau khoản chi này'
+    );
+
+    expect(screen.getByTestId('selected-category-name')).toHaveTextContent('Ăn uống');
+    expect(screen.getByDisplayValue('Cơm trưa')).toBeTruthy();
+  });
+
+  it('updates amount display and remaining budget when typing on virtual numpad', async () => {
+    await render(
+      <LedgerProvider>
+        <ManualEntryModal visible />
+      </LedgerProvider>
+    );
+
+    // Move to 2024-07-09 (120,000 ₫ prior remaining)
+    await fireEvent.press(screen.getByTestId('manual-entry-prev-date'));
+
+    // Delete current amount
+    for (let i = 0; i < 6; i++) {
+      await fireEvent.press(screen.getByTestId('numpad-key-delete'));
+    }
+
+    // Type 65000 -> 120,000 - 65,000 = 55,000 ₫ remaining
+    await fireEvent.press(screen.getByTestId('numpad-key-6'));
+    await fireEvent.press(screen.getByTestId('numpad-key-5'));
+    await fireEvent.press(screen.getByTestId('numpad-key-000'));
+
+    expect(screen.getByTestId('amount-display-value')).toHaveTextContent('65.000');
+    expect(screen.getByTestId('remaining-budget-badge')).toHaveTextContent(
+      'Còn 55.000 ₫ sau khoản chi này'
+    );
+  });
+
+  it('submits transaction and allows negative available balance when spending exceeds funds', async () => {
+    const onClose = jest.fn();
+
+    await render(
+      <LedgerProvider>
+        <GreetingHeader userName="Minh" />
+        <ManualEntryModal visible onClose={onClose} />
+      </LedgerProvider>
+    );
+
+    // Clear 45000 and type 5000000 (> 4,500,000 initial balance)
+    for (let i = 0; i < 6; i++) {
+      await fireEvent.press(screen.getByTestId('numpad-key-delete'));
+    }
+    await fireEvent.press(screen.getByTestId('numpad-key-5'));
+    await fireEvent.press(screen.getByTestId('numpad-key-000'));
+    await fireEvent.press(screen.getByTestId('numpad-key-000'));
+
+    await fireEvent.changeText(screen.getByTestId('manual-entry-note-input'), 'Mua laptop');
+    await fireEvent.press(screen.getByTestId('submit-expense-button'));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('balance-amount-display')).toHaveTextContent('-500.000 ₫');
+  });
+
+  it('shows validation error and prevents submission when amount is 0', async () => {
+    const onClose = jest.fn();
+
+    await render(
+      <LedgerProvider>
+        <ManualEntryModal visible onClose={onClose} />
+      </LedgerProvider>
+    );
+
+    for (let i = 0; i < 6; i++) {
+      await fireEvent.press(screen.getByTestId('numpad-key-delete'));
+    }
+
+    expect(screen.getByTestId('amount-display-value')).toHaveTextContent('0');
+
+    await fireEvent.press(screen.getByTestId('submit-expense-button'));
+
+    expect(screen.getByText('Vui lòng nhập số tiền lớn hơn 0')).toBeTruthy();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('allows opening category picker and selecting a category', async () => {
+    await render(
+      <LedgerProvider>
+        <ManualEntryModal visible />
+      </LedgerProvider>
+    );
+
+    await fireEvent.press(screen.getByTestId('category-selector-button'));
+    expect(screen.getByText('Chọn danh mục chi tiêu')).toBeTruthy();
+
+    await fireEvent.press(screen.getByTestId('category-option-shopping'));
+    expect(screen.getByTestId('selected-category-name')).toHaveTextContent('Mua sắm');
+  });
+});

@@ -1,9 +1,13 @@
 import { Slot } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from '../src/auth/AuthContext';
+import { DayTransactionsSheet } from '../src/components/calendar/DayTransactionsSheet';
+import { ManualEntryModal } from '../src/components/manual-entry/ManualEntryModal';
 import { SignInGate } from '../src/components/SignInGate';
+import { LedgerProvider } from '../src/context/LedgerContext';
 import { colors, type } from '../src/theme';
 
 function AuthGate() {
@@ -20,7 +24,14 @@ function AuthGate() {
   if (status === 'signed_out') {
     return <SignInGate />;
   }
-  return <Slot />;
+  return (
+    <LedgerProvider>
+      <Slot />
+      {/* Mount shared modal sheets at root layout so they are accessible from all tabs and routes */}
+      <DayTransactionsSheet />
+      <ManualEntryModal />
+    </LedgerProvider>
+  );
 }
 
 export default function RootLayout() {

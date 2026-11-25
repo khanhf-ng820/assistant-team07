@@ -1,6 +1,6 @@
 import { ApiError } from '../src/api/errors';
 import { createFetchTransport, type HttpTransport } from '../src/api/transport';
-import type { AuthGateway, AuthSession } from '../src/auth/types';
+import type { AuthGateway, AuthSession, SessionStorage } from '../src/auth/types';
 import { SUPABASE_PARTIAL_CONFIG_ERROR, resolveMobileConfig } from '../src/config';
 import { createCarentaRuntime, createDefaultCarentaRuntime } from '../src/runtime/carentaRuntime';
 import { createMemorySessionStorage } from './helpers/memorySessionStorage';
@@ -763,6 +763,86 @@ describe('CarentaRuntime Auth Session lifecycle, concurrency fencing, and Q3 ref
     await expect(permanentRuntime.apiClient.getBudgetSummary()).rejects.toMatchObject({
       code: 'NETWORK_UNAVAILABLE',
     });
+  });
+
+  it('invalidates dead Auth Session in memory, signs out UI, wipes cache, and preserves AUTH_TOKEN_EXPIRED when revoked 401 refresh coincides with STORAGE_CLEAR_FAILED', async () => {
+    const revokedSession = makeSession({ accessToken: 'revoked-jwt' });
+    const storage: SessionStorage = {
+      getSession: jest.fn(async () => revokedSession),
+      setSession: jest.fn(async () => {}),
+      clearSession: jest.fn(async () => {
+        throw new ApiError({
+          code: 'STORAGE_CLEAR_FAILED',
+          message: 'Keychain delete failed',
+          retryable: true,
+          userMessage: 'Không thể xóa phiên đăng nhập khỏi bộ nhớ bảo mật. Vui lòng thử đăng xuất lại.',
+        });
+      }),
+    };
+    const authGateway: AuthGateway = {
+      signInWithPassword: jest.fn(async () => revokedSession),
+      refreshSession: jest.fn(async () => {
+        throw new ApiError({
+          code: 'AUTH_TOKEN_EXPIRED',
+          status: 401,
+          message: 'Refresh token revoked',
+          retryable: false,
+          userMessage: 'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.',
+        });
+      }),
+      signOut: jest.fn(async () => {}),
+    };
+
+    let mode: 'summary' | '401' | 'offline' = 'summary';
+    const fetchMock = jest.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => {
+      if (mode === 'offline') throw new TypeError('Network unavailable');
+      if (mode === '401') {
+        return jsonResponse(
+          { error: { code: 'AUTH_TOKEN_EXPIRED', message: 'Expired', request_id: 'req-401' } },
+          401
+        );
+      }
+      return jsonResponse(sampleBudgetSummary);
+    });
+
+    const runtime = createCarentaRuntime({
+      apiBaseUrl: 'http://example.test',
+      authMode: { kind: 'authenticated', storage, authGateway },
+      httpTransport: createFetchTransport({ fetchImpl: fetchMock as unknown as typeof fetch }),
+      now: () => 1_700_000_000_000,
+    });
+
+    await runtime.restore();
+    await expect(runtime.apiClient.getBudgetSummary()).resolves.toMatchObject({
+      fromCache: false,
+      data: sampleBudgetSummary,
+    });
+
+    mode = '401';
+    await expect(runtime.apiClient.getAuthMe()).rejects.toMatchObject({
+      code: 'AUTH_TOKEN_EXPIRED',
+      status: 401,
+    });
+
+    expect(runtime.getSnapshot()).toMatchObject({
+      status: 'signed_out',
+      student: null,
+      error: 'Không thể xóa phiên đăng nhập khỏi bộ nhớ bảo mật. Vui lòng thử đăng xuất lại.',
+      canRetryRestore: false,
+    });
+
+    mode = 'offline';
+    await expect(runtime.apiClient.getBudgetSummary()).rejects.toMatchObject({
+      code: 'NETWORK_UNAVAILABLE',
+    });
+
+    mode = '401';
+    await expect(runtime.apiClient.getAuthMe()).rejects.toMatchObject({
+      code: 'AUTH_TOKEN_EXPIRED',
+      status: 401,
+    });
+    const lastHeaders = fetchMock.mock.calls.at(-1)?.[1]?.headers as Record<string, string> | undefined;
+    expect(lastHeaders?.Authorization).toBeUndefined();
   });
 
   it('serializes restore reads behind pending signOut clearSession and protects explicit signIn against slower failed restore', async () => {

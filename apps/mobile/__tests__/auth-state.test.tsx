@@ -6,6 +6,7 @@ import { createFetchTransport } from '../src/api/transport';
 import { AuthProvider, useAuth } from '../src/auth/AuthContext';
 import type { AuthGateway, AuthSession } from '../src/auth/types';
 import { SignInGate } from '../src/components/SignInGate';
+import { LedgerProvider } from '../src/context/LedgerContext';
 import { createCarentaRuntime } from '../src/runtime/carentaRuntime';
 import { createMemorySessionStorage } from './helpers/memorySessionStorage';
 
@@ -337,7 +338,9 @@ describe('AuthProvider and SignInGate', () => {
 
     await render(
       <AuthProvider runtime={runtime}>
-        <StatsScreen />
+        <LedgerProvider>
+          <StatsScreen />
+        </LedgerProvider>
       </AuthProvider>
     );
 
@@ -428,7 +431,9 @@ describe('AuthProvider and SignInGate', () => {
 
     await render(
       <AuthProvider runtime={runtime}>
-        <StatsScreen />
+        <LedgerProvider>
+          <StatsScreen />
+        </LedgerProvider>
       </AuthProvider>
     );
 
