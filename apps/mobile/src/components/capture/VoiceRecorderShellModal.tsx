@@ -4,11 +4,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useCapture } from '../../context/CaptureContext';
 import { colors, type } from '../../theme';
 
+interface VoiceRecorderShellModalProps {
+  renderRecorder?: () => React.ReactNode;
+}
+
 /**
  * Launch shell for the Voice AI recorder bar (#49).
  * Microphone permission is already verified before this modal opens.
  */
-export function VoiceRecorderShellModal() {
+export function VoiceRecorderShellModal({ renderRecorder }: VoiceRecorderShellModalProps = {}) {
   const { captureFlow, cancelCapture, fallbackToManualEntry } = useCapture();
 
   const isVisible = captureFlow === 'recording';
@@ -46,13 +50,17 @@ export function VoiceRecorderShellModal() {
             </Pressable>
           </View>
 
-          <View style={styles.statusCard}>
-            <Text style={styles.micIcon}>🎙️</Text>
-            <Text style={styles.statusTitle}>Micro đã sẵn sàng</Text>
-            <Text style={styles.statusBody}>
-              Nói ngắn gọn một khoản chi, ví dụ: &quot;Cơm trưa ba mươi lăm nghìn&quot; (tối đa 30 giây, tích hợp pipeline #49).
-            </Text>
-          </View>
+          {renderRecorder ? (
+            renderRecorder()
+          ) : (
+            <View style={styles.statusCard}>
+              <Text style={styles.micIcon}>🎙️</Text>
+              <Text style={styles.statusTitle}>Micro đã sẵn sàng</Text>
+              <Text style={styles.statusBody}>
+                Nói ngắn gọn một khoản chi, ví dụ: &quot;Cơm trưa ba mươi lăm nghìn&quot; (tối đa 30 giây, tích hợp pipeline #49).
+              </Text>
+            </View>
+          )}
 
           <View style={styles.actionsRow}>
             <Pressable

@@ -1,14 +1,18 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useCapture } from '../../context/CaptureContext';
 import { colors, type } from '../../theme';
 
+interface ReceiptCameraShellModalProps {
+  renderViewfinder?: () => React.ReactNode;
+}
+
 /**
  * Launch shell for the Receipt OCR camera viewfinder (#48).
  * Camera permission is already verified before this modal opens.
  */
-export function ReceiptCameraShellModal() {
+export function ReceiptCameraShellModal({ renderViewfinder }: ReceiptCameraShellModalProps = {}) {
   const {
     captureFlow,
     cancelCapture,
@@ -19,10 +23,11 @@ export function ReceiptCameraShellModal() {
 
   const isVisible = captureFlow === 'camera_preview';
 
-  const handleClose = () => {
-    setGalleryStatus(null);
-    cancelCapture();
-  };
+  useEffect(() => {
+    if (!isVisible) {
+      setGalleryStatus(null);
+    }
+  }, [isVisible]);
 
   const handlePickFromGallery = async () => {
     const result = await requestGalleryPermission();
@@ -36,14 +41,14 @@ export function ReceiptCameraShellModal() {
       testID="receipt-camera-shell-modal"
       visible={isVisible}
       animationType="slide"
-      onRequestClose={handleClose}
+      onRequestClose={cancelCapture}
     >
       <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
         <View style={styles.header}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Đóng camera hóa đơn"
-            onPress={handleClose}
+            onPress={cancelCapture}
             hitSlop={8}
             style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
             testID="ocr-shell-close"
@@ -56,18 +61,22 @@ export function ReceiptCameraShellModal() {
           <View style={styles.headerSpacer} />
         </View>
 
-        <View style={styles.viewfinderFrame}>
-          <Text style={styles.cameraIcon}>📷</Text>
-          <Text style={styles.viewfinderTitle}>Camera đã sẵn sàng</Text>
-          <Text style={styles.viewfinderSubtitle}>
-            Đặt hóa đơn hoặc ảnh chuyển khoản vào khung hình để trích xuất tự động (Issue #48).
-          </Text>
-          {galleryStatus ? (
-            <Text style={styles.galleryStatusText} testID="ocr-gallery-status">
-              {galleryStatus}
+        {renderViewfinder ? (
+          renderViewfinder()
+        ) : (
+          <View style={styles.viewfinderFrame}>
+            <Text style={styles.cameraIcon}>📷</Text>
+            <Text style={styles.viewfinderTitle}>Camera đã sẵn sàng</Text>
+            <Text style={styles.viewfinderSubtitle}>
+              Đặt hóa đơn hoặc ảnh chuyển khoản vào khung hình để trích xuất tự động (Issue #48).
             </Text>
-          ) : null}
-        </View>
+            {galleryStatus ? (
+              <Text style={styles.galleryStatusText} testID="ocr-gallery-status">
+                {galleryStatus}
+              </Text>
+            ) : null}
+          </View>
+        )}
 
         <View style={styles.footerActions}>
           <Pressable

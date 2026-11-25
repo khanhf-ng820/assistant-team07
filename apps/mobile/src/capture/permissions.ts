@@ -26,6 +26,8 @@ export interface PermissionAdapters {
   openSettings?: () => Promise<void> | void;
 }
 
+type PermissionFn = () => Promise<RawPermissionResponse>;
+
 export function normalizePermissionResponse(
   kind: CapturePermissionKind,
   response: RawPermissionResponse | null | undefined
@@ -49,74 +51,55 @@ export function normalizePermissionResponse(
   };
 }
 
-function getDefaultCheckFn(
-  kind: CapturePermissionKind
-): (() => Promise<RawPermissionResponse>) | null {
+function getDefaultPermissionFn(
+  kind: CapturePermissionKind,
+  action: 'check' | 'request'
+): PermissionFn | null {
   try {
     if (kind === 'camera') {
       const { Camera } = require('expo-camera') as typeof import('expo-camera');
-      return Camera?.getCameraPermissionsAsync
-        ? () => Camera.getCameraPermissionsAsync()
-        : null;
+      const fn =
+        action === 'check'
+          ? Camera?.getCameraPermissionsAsync
+          : Camera?.requestCameraPermissionsAsync;
+      return fn ? () => fn() : null;
     }
+
     if (kind === 'media_library') {
       const ImagePicker = require('expo-image-picker') as typeof import('expo-image-picker');
-      return ImagePicker?.getMediaLibraryPermissionsAsync
-        ? () => ImagePicker.getMediaLibraryPermissionsAsync()
-        : null;
+      const fn =
+        action === 'check'
+          ? ImagePicker?.getMediaLibraryPermissionsAsync
+          : ImagePicker?.requestMediaLibraryPermissionsAsync;
+      return fn ? () => fn() : null;
     }
+
     const ExpoAudio = require('expo-audio') as typeof import('expo-audio');
-    return ExpoAudio?.getRecordingPermissionsAsync
-      ? () => ExpoAudio.getRecordingPermissionsAsync()
-      : null;
+    const fn =
+      action === 'check'
+        ? ExpoAudio?.getRecordingPermissionsAsync
+        : ExpoAudio?.requestRecordingPermissionsAsync;
+    return fn ? () => fn() : null;
   } catch {
     return null;
   }
 }
 
-function getDefaultRequestFn(
-  kind: CapturePermissionKind
-): (() => Promise<RawPermissionResponse>) | null {
-  try {
-    if (kind === 'camera') {
-      const { Camera } = require('expo-camera') as typeof import('expo-camera');
-      return Camera?.requestCameraPermissionsAsync
-        ? () => Camera.requestCameraPermissionsAsync()
-        : null;
-    }
-    if (kind === 'media_library') {
-      const ImagePicker = require('expo-image-picker') as typeof import('expo-image-picker');
-      return ImagePicker?.requestMediaLibraryPermissionsAsync
-        ? () => ImagePicker.requestMediaLibraryPermissionsAsync()
-        : null;
-    }
-    const ExpoAudio = require('expo-audio') as typeof import('expo-audio');
-    return ExpoAudio?.requestRecordingPermissionsAsync
-      ? () => ExpoAudio.requestRecordingPermissionsAsync()
-      : null;
-  } catch {
-    return null;
+function resolvePermissionAdapter(
+  kind: CapturePermissionKind,
+  action: 'check' | 'request',
+  adapters?: PermissionAdapters
+): PermissionFn | null {
+  if (action === 'check') {
+    if (kind === 'camera' && adapters?.getCamera) return adapters.getCamera;
+    if (kind === 'media_library' && adapters?.getMediaLibrary) return adapters.getMediaLibrary;
+    if (kind === 'microphone' && adapters?.getMicrophone) return adapters.getMicrophone;
+  } else {
+    if (kind === 'camera' && adapters?.requestCamera) return adapters.requestCamera;
+    if (kind === 'media_library' && adapters?.requestMediaLibrary) return adapters.requestMediaLibrary;
+    if (kind === 'microphone' && adapters?.requestMicrophone) return adapters.requestMicrophone;
   }
-}
-
-function resolveCheckAdapter(
-  kind: CapturePermissionKind,
-  adapters?: PermissionAdapters
-): (() => Promise<RawPermissionResponse>) | null {
-  if (kind === 'camera' && adapters?.getCamera) return adapters.getCamera;
-  if (kind === 'media_library' && adapters?.getMediaLibrary) return adapters.getMediaLibrary;
-  if (kind === 'microphone' && adapters?.getMicrophone) return adapters.getMicrophone;
-  return getDefaultCheckFn(kind);
-}
-
-function resolveRequestAdapter(
-  kind: CapturePermissionKind,
-  adapters?: PermissionAdapters
-): (() => Promise<RawPermissionResponse>) | null {
-  if (kind === 'camera' && adapters?.requestCamera) return adapters.requestCamera;
-  if (kind === 'media_library' && adapters?.requestMediaLibrary) return adapters.requestMediaLibrary;
-  if (kind === 'microphone' && adapters?.requestMicrophone) return adapters.requestMicrophone;
-  return getDefaultRequestFn(kind);
+  return getDefaultPermissionFn(kind, action);
 }
 
 /** Checks current permission state without prompting the user. */
@@ -124,7 +107,7 @@ export async function checkCapturePermission(
   kind: CapturePermissionKind,
   adapters?: PermissionAdapters
 ): Promise<PermissionCheckResult> {
-  const checkFn = resolveCheckAdapter(kind, adapters);
+  const checkFn = resolvePermissionAdapter(kind, 'check', adapters);
   if (!checkFn) {
     return { kind, outcome: 'unavailable', canAskAgain: false };
   }
@@ -145,7 +128,7 @@ export async function requestCapturePermission(
   kind: CapturePermissionKind,
   adapters?: PermissionAdapters
 ): Promise<PermissionCheckResult> {
-  const checkFn = resolveCheckAdapter(kind, adapters);
+  const checkFn = resolvePermissionAdapter(kind, 'check', adapters);
   if (checkFn) {
     try {
       const current = normalizePermissionResponse(kind, await checkFn());
@@ -157,7 +140,7 @@ export async function requestCapturePermission(
     }
   }
 
-  const requestFn = resolveRequestAdapter(kind, adapters);
+  const requestFn = resolvePermissionAdapter(kind, 'request', adapters);
   if (!requestFn) {
     return { kind, outcome: 'unavailable', canAskAgain: false };
   }

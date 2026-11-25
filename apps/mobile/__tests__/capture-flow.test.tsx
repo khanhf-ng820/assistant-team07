@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import React from 'react';
-import { PermissionAdapters } from '../src/capture/permissions';
+import { AppState, AppStateStatus, Pressable, Text } from 'react-native';
+import { PermissionAdapters, RawPermissionResponse } from '../src/capture/permissions';
 import { CaptureChooser } from '../src/components/CaptureChooser';
 import { PermissionPromptModal } from '../src/components/capture/PermissionPromptModal';
 import { ReceiptCameraShellModal } from '../src/components/capture/ReceiptCameraShellModal';
@@ -8,7 +9,6 @@ import { VoiceRecorderShellModal } from '../src/components/capture/VoiceRecorder
 import { ManualEntryModal } from '../src/components/manual-entry/ManualEntryModal';
 import { CaptureProvider, useCapture } from '../src/context/CaptureContext';
 import { LedgerProvider } from '../src/context/LedgerContext';
-import { Pressable, Text } from 'react-native';
 
 function CaptureHarness({ adapters }: { adapters?: PermissionAdapters }) {
   const [chooserVisible, setChooserVisible] = React.useState(false);
@@ -31,7 +31,7 @@ function CaptureHarness({ adapters }: { adapters?: PermissionAdapters }) {
 }
 
 function HarnessControls({ onOpenChooser }: { onOpenChooser: () => void }) {
-  const { captureFlow, startCapture } = useCapture();
+  const { captureFlow, startCapture, retryPermission } = useCapture();
   return (
     <>
       <Text testID="capture-flow-state">{captureFlow}</Text>
@@ -41,12 +41,15 @@ function HarnessControls({ onOpenChooser }: { onOpenChooser: () => void }) {
       <Pressable testID="trigger-voice-directly" onPress={() => void startCapture('voice')}>
         <Text>Voice</Text>
       </Pressable>
+      <Pressable testID="trigger-retry-directly" onPress={() => void retryPermission()}>
+        <Text>Retry</Text>
+      </Pressable>
     </>
   );
 }
 
 describe('Phase 2 capture flow & hardware permissions', () => {
-  it('launches receipt camera shell when camera permission is granted and checks gallery permission', async () => {
+  it('launches receipt camera shell when camera permission is granted and keeps camera open if optional gallery prompt is dismissed', async () => {
     const adapters: PermissionAdapters = {
       getCamera: jest.fn().mockResolvedValue({ status: 'undetermined', granted: false }),
       requestCamera: jest.fn().mockResolvedValue({ status: 'granted', granted: true }),
@@ -71,13 +74,22 @@ describe('Phase 2 capture flow & hardware permissions', () => {
       expect(screen.getByTestId('capture-flow-state')).toHaveTextContent('permission_prompt');
     });
     expect(screen.getByText('Cần quyền truy cập Thư viện ảnh')).toBeTruthy();
+
+    // Dismissing gallery prompt returns user cleanly to the camera viewfinder
+    await fireEvent.press(screen.getByTestId('permission-close-button'));
+    expect(screen.getByTestId('capture-flow-state')).toHaveTextContent('camera_preview');
   });
 
-  it('handles denied permission with retry recovery to camera shell', async () => {
+  it('handles denied permission with retry recovery and guards against concurrent retry taps', async () => {
+    let resolveSecondAttempt!: (value: RawPermissionResponse) => void;
+    const secondAttemptPromise = new Promise<RawPermissionResponse>((resolve) => {
+      resolveSecondAttempt = resolve;
+    });
+
     const requestCamera = jest
       .fn()
       .mockResolvedValueOnce({ status: 'denied', granted: false, canAskAgain: true })
-      .mockResolvedValueOnce({ status: 'granted', granted: true, canAskAgain: true });
+      .mockReturnValueOnce(secondAttemptPromise);
 
     const adapters: PermissionAdapters = {
       getCamera: jest.fn().mockResolvedValue({ status: 'undetermined', granted: false }),
@@ -92,19 +104,38 @@ describe('Phase 2 capture flow & hardware permissions', () => {
       expect(screen.getByTestId('permission-retry-button')).toBeTruthy();
     });
 
+    // Pressing retry enters requesting_permission and blocks any concurrent retry invocation
     await fireEvent.press(screen.getByTestId('permission-retry-button'));
+    expect(screen.getByTestId('capture-flow-state')).toHaveTextContent('requesting_permission');
+    await fireEvent.press(screen.getByTestId('trigger-retry-directly'));
+    expect(requestCamera).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      resolveSecondAttempt({ status: 'granted', granted: true, canAskAgain: true });
+    });
+
     await waitFor(() => {
       expect(screen.getByTestId('capture-flow-state')).toHaveTextContent('camera_preview');
     });
-    expect(requestCamera).toHaveBeenCalledTimes(2);
   });
 
-  it('handles permanently blocked microphone permission with OS settings and manual fallback', async () => {
+  it('handles permanently blocked microphone permission with OS settings auto-resume and manual fallback', async () => {
+    let appStateHandler: ((state: AppStateStatus) => void) | undefined;
+    const addEventListenerSpy = jest
+      .spyOn(AppState, 'addEventListener')
+      .mockImplementation((_type, listener) => {
+        appStateHandler = listener;
+        return { remove: jest.fn() };
+      });
+
+    const getMicrophone = jest
+      .fn()
+      .mockResolvedValueOnce({ status: 'denied', granted: false, canAskAgain: false })
+      .mockResolvedValueOnce({ status: 'granted', granted: true, canAskAgain: true });
+
     const openSettings = jest.fn();
     const adapters: PermissionAdapters = {
-      getMicrophone: jest
-        .fn()
-        .mockResolvedValue({ status: 'denied', granted: false, canAskAgain: false }),
+      getMicrophone,
       openSettings,
     };
 
@@ -120,9 +151,21 @@ describe('Phase 2 capture flow & hardware permissions', () => {
     await fireEvent.press(screen.getByTestId('permission-open-settings-button'));
     expect(openSettings).toHaveBeenCalledTimes(1);
 
-    await fireEvent.press(screen.getByTestId('permission-fallback-manual-button'));
+    // Simulating returning from OS settings after user enables Microphone permission
+    await act(async () => {
+      appStateHandler?.('active');
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('capture-flow-state')).toHaveTextContent('recording');
+    });
+
+    // Manual fallback from voice shell still opens ManualEntryModal cleanly
+    await fireEvent.press(screen.getByTestId('voice-fallback-manual-button'));
     expect(screen.getByTestId('capture-flow-state')).toHaveTextContent('idle');
     expect(screen.getByText('Thêm khoản chi')).toBeTruthy();
+
+    addEventListenerSpy.mockRestore();
   });
 
   it('prevents launching a second capture flow while one session is active', async () => {

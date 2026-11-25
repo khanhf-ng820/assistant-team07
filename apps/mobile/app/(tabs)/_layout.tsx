@@ -16,7 +16,7 @@ function TemplateTabBar({ state, descriptors, emitter, navigateToTab, insets }: 
   }
 
   const handleOpenChooser = () => {
-    if (isCaptureBusy) return;
+    if (isCaptureBusy || captureOpen) return;
     setCaptureOpen(true);
   };
 
@@ -51,7 +51,7 @@ function TemplateTabBar({ state, descriptors, emitter, navigateToTab, insets }: 
                   accessibilityLabel="Thêm giao dịch"
                   accessibilityState={{ disabled: isCaptureBusy }}
                   disabled={isCaptureBusy}
-                  style={styles.plus}
+                  style={[styles.plus, isCaptureBusy && styles.plusDisabled]}
                   onPress={handleOpenChooser}
                 >
                   <Text style={styles.plusText}>+</Text>
@@ -80,5 +80,6 @@ const styles = StyleSheet.create({
   tab: { flex: 1, minHeight: 56, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 },
   tabText: { ...type.body, fontWeight: '600', textAlign: 'center' },
   plus: { width: 56, height: 56, borderRadius: 28, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+  plusDisabled: { opacity: 0.5 },
   plusText: { fontSize: 30, lineHeight: 36, color: colors.surface },
 });

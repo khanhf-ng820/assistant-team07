@@ -7,17 +7,20 @@ import { colors, type } from '../../theme';
 
 const PERMISSION_COPY: Record<
   CapturePermissionKind,
-  { title: string; reason: string }
+  { icon: string; title: string; reason: string }
 > = {
   camera: {
+    icon: '📷',
     title: 'Cần quyền truy cập Camera',
     reason: 'CARENTA cần quyền camera để chụp hóa đơn hoặc ảnh chuyển khoản.',
   },
   media_library: {
+    icon: '🖼️',
     title: 'Cần quyền truy cập Thư viện ảnh',
     reason: 'CARENTA cần quyền thư viện ảnh để bạn chọn ảnh hóa đơn có sẵn.',
   },
   microphone: {
+    icon: '🎙️',
     title: 'Cần quyền truy cập Micro',
     reason: 'CARENTA cần quyền micro để ghi âm mô tả khoản chi tiêu của bạn.',
   },
@@ -29,14 +32,21 @@ export function PermissionPromptModal() {
     permissionResult,
     retryPermission,
     openSettingsForPermission,
+    dismissPermissionPrompt,
     fallbackToManualEntry,
-    cancelCapture,
   } = useCapture();
 
   const isVisible = captureFlow === 'permission_prompt' && permissionResult !== null;
   const kind: CapturePermissionKind = permissionResult?.kind ?? 'camera';
   const outcome = permissionResult?.outcome ?? 'denied';
   const copy = PERMISSION_COPY[kind];
+
+  const statusLabel =
+    outcome === 'blocked'
+      ? 'Đã tắt trong Cài đặt'
+      : outcome === 'unavailable'
+        ? 'Thiết bị không hỗ trợ'
+        : 'Chưa được cấp quyền';
 
   const getGuidanceText = (): string => {
     if (outcome === 'blocked') {
@@ -54,17 +64,26 @@ export function PermissionPromptModal() {
       visible={isVisible}
       transparent
       animationType="fade"
-      onRequestClose={cancelCapture}
+      onRequestClose={dismissPermissionPrompt}
     >
       <SafeAreaView style={styles.overlay}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Đóng thông báo quyền"
-          onPress={cancelCapture}
+          onPress={dismissPermissionPrompt}
           style={StyleSheet.absoluteFill}
         />
 
         <View accessibilityViewIsModal style={styles.card}>
+          <View style={styles.headerRow}>
+            <View style={styles.iconCircle}>
+              <Text style={styles.iconText}>{copy.icon}</Text>
+            </View>
+            <View style={styles.statusPill}>
+              <Text style={styles.statusPillText}>{statusLabel}</Text>
+            </View>
+          </View>
+
           <Text accessibilityRole="header" style={styles.title}>
             {copy.title}
           </Text>
@@ -111,7 +130,7 @@ export function PermissionPromptModal() {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Đóng"
-              onPress={cancelCapture}
+              onPress={dismissPermissionPrompt}
               style={({ pressed }) => [styles.ghostButton, pressed && styles.pressed]}
               testID="permission-close-button"
             >
@@ -141,6 +160,34 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 20,
     elevation: 8,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  iconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.primaryTint,
+    borderWidth: 1,
+    borderColor: colors.primaryLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconText: {
+    fontSize: 22,
+  },
+  statusPill: {
+    backgroundColor: colors.dangerSoft,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  statusPillText: {
+    ...type.captionBold,
+    color: colors.dangerText,
   },
   title: {
     ...type.heading,

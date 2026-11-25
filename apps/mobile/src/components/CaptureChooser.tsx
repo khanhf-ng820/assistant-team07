@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import {
+  AccessibilityInfo,
   Animated,
   Modal,
   Pressable,
@@ -53,10 +54,34 @@ export function CaptureChooser({
   const slideAnim = useRef(new Animated.Value(visible ? 0 : 20)).current;
 
   useEffect(() => {
-    if (visible) {
+    if (!visible) {
       fadeAnim.setValue(0);
       slideAnim.setValue(20);
-      const animation = Animated.parallel([
+      return;
+    }
+
+    let cancelled = false;
+    let runningAnimation: Animated.CompositeAnimation | null = null;
+
+    const startEntrance = async () => {
+      let reduceMotion = false;
+      try {
+        reduceMotion = await AccessibilityInfo.isReduceMotionEnabled();
+      } catch {
+        reduceMotion = false;
+      }
+
+      if (cancelled) return;
+
+      if (reduceMotion) {
+        fadeAnim.setValue(1);
+        slideAnim.setValue(0);
+        return;
+      }
+
+      fadeAnim.setValue(0);
+      slideAnim.setValue(20);
+      runningAnimation = Animated.parallel([
         Animated.timing(fadeAnim, {
           toValue: 1,
           duration: 180,
@@ -68,12 +93,15 @@ export function CaptureChooser({
           useNativeDriver: true,
         }),
       ]);
-      animation.start();
-      return () => animation.stop();
-    } else {
-      fadeAnim.setValue(0);
-      slideAnim.setValue(20);
-    }
+      runningAnimation.start();
+    };
+
+    void startEntrance();
+
+    return () => {
+      cancelled = true;
+      runningAnimation?.stop();
+    };
   }, [fadeAnim, slideAnim, visible]);
 
   const handleSelect = (method: CaptureMethod) => {

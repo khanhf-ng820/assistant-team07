@@ -7,8 +7,10 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { AppState } from 'react-native';
 import {
   CapturePermissionKind,
+  checkCapturePermission,
   openAppPermissionSettings,
   PermissionAdapters,
   PermissionCheckResult,
@@ -34,6 +36,7 @@ export interface CaptureContextType {
   retryPermission: () => Promise<void>;
   openSettingsForPermission: () => Promise<boolean>;
   requestGalleryPermission: () => Promise<PermissionCheckResult>;
+  dismissPermissionPrompt: () => void;
   fallbackToManualEntry: () => void;
   cancelCapture: () => void;
 }
@@ -54,8 +57,10 @@ export function CaptureProvider({ children, permissionAdapters }: CaptureProvide
 
   const flowTokenRef = useRef<number>(0);
   const isMountedRef = useRef<boolean>(true);
-  // Track synchronous flow state so rapid back-to-back taps cannot bypass state updates
+  // Track synchronous busy and in-flight request state so rapid double-taps cannot launch duplicate OS prompts
   const busyRef = useRef<boolean>(false);
+  const requestingRef = useRef<boolean>(false);
+  const awaitingSettingsReturnRef = useRef<boolean>(false);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -70,38 +75,82 @@ export function CaptureProvider({ children, permissionAdapters }: CaptureProvide
   const resetToIdle = useCallback(() => {
     flowTokenRef.current += 1;
     busyRef.current = false;
+    requestingRef.current = false;
+    awaitingSettingsReturnRef.current = false;
     setCaptureFlow('idle');
     setActiveMethod(null);
     setPermissionResult(null);
   }, []);
 
-  const runPermissionFlow = useCallback(
+  const applyPermissionOutcome = useCallback(
+    (method: 'ocr' | 'voice', result: PermissionCheckResult) => {
+      setPermissionResult(result);
+      if (result.outcome === 'granted') {
+        awaitingSettingsReturnRef.current = false;
+        setCaptureFlow(method === 'ocr' ? 'camera_preview' : 'recording');
+      } else {
+        setCaptureFlow('permission_prompt');
+      }
+    },
+    []
+  );
+
+  // Re-check permission automatically when returning from OS settings
+  useEffect(() => {
+    if (captureFlow !== 'permission_prompt' || !permissionResult || !activeMethod || activeMethod === 'manual') {
+      return;
+    }
+
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState !== 'active' || !awaitingSettingsReturnRef.current || requestingRef.current) {
+        return;
+      }
+
+      awaitingSettingsReturnRef.current = false;
+      const requestToken = flowTokenRef.current;
+
+      void checkCapturePermission(permissionResult.kind, permissionAdapters).then((rechecked) => {
+        if (!isMountedRef.current || flowTokenRef.current !== requestToken) {
+          return;
+        }
+        applyPermissionOutcome(activeMethod, rechecked);
+      });
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [activeMethod, applyPermissionOutcome, captureFlow, permissionAdapters, permissionResult]);
+
+  const executePermissionRequest = useCallback(
     async (method: 'ocr' | 'voice', kind: CapturePermissionKind) => {
+      if (requestingRef.current) return;
+
       const requestToken = ++flowTokenRef.current;
       busyRef.current = true;
+      requestingRef.current = true;
       setActiveMethod(method);
       setPermissionResult(null);
       setCaptureFlow('requesting_permission');
 
-      const result = await requestCapturePermission(kind, permissionAdapters);
-      if (!isMountedRef.current || flowTokenRef.current !== requestToken) {
-        return;
-      }
-
-      if (result.outcome === 'granted') {
-        setPermissionResult(result);
-        setCaptureFlow(method === 'ocr' ? 'camera_preview' : 'recording');
-      } else {
-        setPermissionResult(result);
-        setCaptureFlow('permission_prompt');
+      try {
+        const result = await requestCapturePermission(kind, permissionAdapters);
+        if (!isMountedRef.current || flowTokenRef.current !== requestToken) {
+          return;
+        }
+        applyPermissionOutcome(method, result);
+      } finally {
+        if (flowTokenRef.current === requestToken) {
+          requestingRef.current = false;
+        }
       }
     },
-    [permissionAdapters]
+    [applyPermissionOutcome, permissionAdapters]
   );
 
   const startCapture = useCallback(
     async (method: CaptureMethod) => {
-      if (busyRef.current || captureFlow !== 'idle' || isManualEntryOpen) {
+      if (busyRef.current || requestingRef.current || captureFlow !== 'idle' || isManualEntryOpen) {
         return;
       }
 
@@ -111,45 +160,65 @@ export function CaptureProvider({ children, permissionAdapters }: CaptureProvide
       }
 
       const kind: CapturePermissionKind = method === 'ocr' ? 'camera' : 'microphone';
-      await runPermissionFlow(method, kind);
+      await executePermissionRequest(method, kind);
     },
-    [captureFlow, isManualEntryOpen, openManualEntry, runPermissionFlow]
+    [captureFlow, executePermissionRequest, isManualEntryOpen, openManualEntry]
   );
 
   const retryPermission = useCallback(async () => {
-    if (!activeMethod || activeMethod === 'manual') return;
-    const kind: CapturePermissionKind =
-      permissionResult?.kind ?? (activeMethod === 'ocr' ? 'camera' : 'microphone');
-    const requestToken = ++flowTokenRef.current;
-    setCaptureFlow('requesting_permission');
-
-    const result = await requestCapturePermission(kind, permissionAdapters);
-    if (!isMountedRef.current || flowTokenRef.current !== requestToken) {
+    if (!activeMethod || activeMethod === 'manual' || requestingRef.current) {
       return;
     }
-
-    if (result.outcome === 'granted') {
-      setPermissionResult(result);
-      setCaptureFlow(activeMethod === 'ocr' ? 'camera_preview' : 'recording');
-    } else {
-      setPermissionResult(result);
-      setCaptureFlow('permission_prompt');
-    }
-  }, [activeMethod, permissionAdapters, permissionResult]);
+    const kind: CapturePermissionKind =
+      permissionResult?.kind ?? (activeMethod === 'ocr' ? 'camera' : 'microphone');
+    await executePermissionRequest(activeMethod, kind);
+  }, [activeMethod, executePermissionRequest, permissionResult]);
 
   const openSettingsForPermission = useCallback(async () => {
-    return openAppPermissionSettings(permissionAdapters);
+    awaitingSettingsReturnRef.current = true;
+    const opened = await openAppPermissionSettings(permissionAdapters);
+    if (!opened) {
+      awaitingSettingsReturnRef.current = false;
+    }
+    return opened;
   }, [permissionAdapters]);
 
   const requestGalleryPermission = useCallback(async () => {
-    const requestToken = ++flowTokenRef.current;
-    const result = await requestCapturePermission('media_library', permissionAdapters);
-    if (isMountedRef.current && flowTokenRef.current === requestToken && result.outcome !== 'granted') {
-      setPermissionResult(result);
-      setCaptureFlow('permission_prompt');
+    if (requestingRef.current) {
+      return {
+        kind: 'media_library',
+        outcome: 'unavailable',
+        canAskAgain: false,
+      } satisfies PermissionCheckResult;
     }
-    return result;
+
+    const requestToken = ++flowTokenRef.current;
+    requestingRef.current = true;
+
+    try {
+      const result = await requestCapturePermission('media_library', permissionAdapters);
+      if (isMountedRef.current && flowTokenRef.current === requestToken && result.outcome !== 'granted') {
+        setPermissionResult(result);
+        setCaptureFlow('permission_prompt');
+      }
+      return result;
+    } finally {
+      if (flowTokenRef.current === requestToken) {
+        requestingRef.current = false;
+      }
+    }
   }, [permissionAdapters]);
+
+  const dismissPermissionPrompt = useCallback(() => {
+    // Keep the camera viewfinder open if the user only dismissed the optional gallery permission prompt
+    if (activeMethod === 'ocr' && permissionResult?.kind === 'media_library') {
+      awaitingSettingsReturnRef.current = false;
+      setPermissionResult(null);
+      setCaptureFlow('camera_preview');
+      return;
+    }
+    resetToIdle();
+  }, [activeMethod, permissionResult, resetToIdle]);
 
   const fallbackToManualEntry = useCallback(() => {
     resetToIdle();
@@ -170,6 +239,7 @@ export function CaptureProvider({ children, permissionAdapters }: CaptureProvide
       retryPermission,
       openSettingsForPermission,
       requestGalleryPermission,
+      dismissPermissionPrompt,
       fallbackToManualEntry,
       cancelCapture,
     }),
@@ -182,6 +252,7 @@ export function CaptureProvider({ children, permissionAdapters }: CaptureProvide
       retryPermission,
       openSettingsForPermission,
       requestGalleryPermission,
+      dismissPermissionPrompt,
       fallbackToManualEntry,
       cancelCapture,
     ]
