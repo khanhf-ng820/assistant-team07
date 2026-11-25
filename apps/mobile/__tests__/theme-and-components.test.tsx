@@ -1,6 +1,6 @@
 import React from 'react';
 import { Text } from 'react-native';
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { Button } from '../src/components/Button';
 import { Card } from '../src/components/Card';
 import { CaptureChooser } from '../src/components/CaptureChooser';
@@ -16,6 +16,7 @@ describe('Theme and Figma Design Tokens', () => {
     expect(colors.savingsTint).toBe('#FFE4E6');
     expect(colors.coral).toBe('#F43F5E');
     expect(colors.warning).toBe('#F59E0B');
+    expect(colors.warningSoft).toBe('#FEF3C7');
     expect(colors.danger).toBe('#EF4444');
     expect(colors.background).toBe('#F8FAFC');
     expect(colors.surfaceCard).toBe('#FFFFFF');
@@ -126,7 +127,7 @@ describe('Toast Component', () => {
     expect(screen.queryByText('Ẩn')).toBeNull();
   });
 
-  it('auto-dismisses after duration with fake timers', async () => {
+  it('auto-dismisses exactly at duration boundary (not at 1999ms, triggers at 2000ms)', async () => {
     jest.useFakeTimers();
     try {
       const onDismiss = jest.fn();
@@ -138,9 +139,71 @@ describe('Toast Component', () => {
           onDismiss={onDismiss}
         />
       );
+      await act(async () => {
+        jest.advanceTimersByTime(1999);
+      });
       expect(onDismiss).not.toHaveBeenCalled();
-      jest.advanceTimersByTime(2000);
+      await act(async () => {
+        jest.advanceTimersByTime(1);
+      });
       expect(onDismiss).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('cleans up timer when hidden via visible={false} before expiry', async () => {
+    jest.useFakeTimers();
+    try {
+      const onDismiss = jest.fn();
+      const { rerender } = await render(
+        <Toast
+          visible
+          message="Ẩn sớm"
+          duration={2000}
+          onDismiss={onDismiss}
+        />
+      );
+      await act(async () => {
+        jest.advanceTimersByTime(1000);
+      });
+      await rerender(
+        <Toast
+          visible={false}
+          message="Ẩn sớm"
+          duration={2000}
+          onDismiss={onDismiss}
+        />
+      );
+      await act(async () => {
+        jest.advanceTimersByTime(2000);
+      });
+      expect(onDismiss).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('cleans up timer on unmount before expiry', async () => {
+    jest.useFakeTimers();
+    try {
+      const onDismiss = jest.fn();
+      const { unmount } = await render(
+        <Toast
+          visible
+          message="Hủy mount"
+          duration={2000}
+          onDismiss={onDismiss}
+        />
+      );
+      await act(async () => {
+        jest.advanceTimersByTime(1000);
+      });
+      await unmount();
+      await act(async () => {
+        jest.advanceTimersByTime(2000);
+      });
+      expect(onDismiss).not.toHaveBeenCalled();
     } finally {
       jest.useRealTimers();
     }
@@ -158,7 +221,9 @@ describe('Toast Component', () => {
           onDismiss={onDismiss}
         />
       );
-      jest.advanceTimersByTime(5000);
+      await act(async () => {
+        jest.advanceTimersByTime(5000);
+      });
       expect(onDismiss).not.toHaveBeenCalled();
     } finally {
       jest.useRealTimers();
@@ -177,10 +242,37 @@ describe('CaptureChooser Integration', () => {
         onSelectManual={onSelectManual}
       />
     );
+    expect(screen.getByText('Chọn phương thức để ghi nhận khoản chi tiêu mới.')).toBeDefined();
     const manualBtn = screen.getByRole('button', { name: 'Nhập thủ công' });
     expect(manualBtn).toBeEnabled();
     await fireEvent.press(manualBtn);
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onSelectManual).toHaveBeenCalledTimes(1);
+  });
+
+  it('invokes onSelectMethod with union id even without onSelectManual', async () => {
+    const onClose = jest.fn();
+    const onSelectMethod = jest.fn();
+    await render(
+      <CaptureChooser
+        visible
+        onClose={onClose}
+        onSelectMethod={onSelectMethod}
+      />
+    );
+    const manualBtn = screen.getByRole('button', { name: 'Nhập thủ công' });
+    expect(manualBtn).toBeEnabled();
+    await fireEvent.press(manualBtn);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onSelectMethod).toHaveBeenCalledWith('manual');
+  });
+
+  it('dismisses when tapping the backdrop outside the sheet while shielding inner sheet touches', async () => {
+    const onClose = jest.fn();
+    await render(<CaptureChooser visible onClose={onClose} />);
+    const sheet = screen.getByTestId('capture-sheet');
+    expect(sheet.props.onStartShouldSetResponder()).toBe(true);
+    await fireEvent.press(screen.getByTestId('capture-backdrop'));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

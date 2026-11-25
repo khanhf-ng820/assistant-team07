@@ -3,7 +3,7 @@ import { render } from '@testing-library/react-native';
 import { Button } from '../src/components/Button';
 import { CaptureChooser } from '../src/components/CaptureChooser';
 import { Header } from '../src/components/Header';
-import { Toast } from '../src/components/Toast';
+import { TOAST_BADGE_CONFIG, Toast, type ToastType } from '../src/components/Toast';
 import { colors } from '../src/theme';
 
 /**
@@ -49,19 +49,28 @@ describe('WCAG 2.1 AA Color Contrast Audit', () => {
     const ratio = getContrastRatio(colors.primary, colors.surface);
     expect(ratio).toBeGreaterThanOrEqual(4.5);
   });
+
+  it.each(['success', 'warning', 'error', 'info'] as ToastType[])(
+    'Toast %s badge icon foreground/background contrast meets WCAG AA (>= 4.5:1)',
+    (type) => {
+      const { fg, bg } = TOAST_BADGE_CONFIG[type];
+      const ratio = getContrastRatio(fg, bg);
+      expect(ratio).toBeGreaterThanOrEqual(4.5);
+    }
+  );
 });
 
 describe('Touch Target Compliance (>= 48x48dp)', () => {
-  it('small Button maintains >= 48dp minimum touch height', async () => {
+  it('small Button maintains >= 48x48dp minimum touch dimensions', async () => {
     const { getByTestId } = await render(<Button title="Small" size="sm" testID="btn-sm" />);
     const btn = getByTestId('btn-sm');
-    expect(btn.props.style.some((s: any) => s && s.minHeight >= 48)).toBe(true);
+    expect(btn.props.style.some((s: any) => s && s.minHeight >= 48 && s.minWidth >= 48)).toBe(true);
   });
 
-  it('medium Button maintains >= 48dp minimum touch height', async () => {
+  it('medium Button maintains >= 48x48dp minimum touch dimensions', async () => {
     const { getByTestId } = await render(<Button title="Medium" size="md" testID="btn-md" />);
     const btn = getByTestId('btn-md');
-    expect(btn.props.style.some((s: any) => s && s.minHeight >= 48)).toBe(true);
+    expect(btn.props.style.some((s: any) => s && s.minHeight >= 48 && s.minWidth >= 48)).toBe(true);
   });
 
   it('Header back button meets >= 48x48dp dimensions', async () => {

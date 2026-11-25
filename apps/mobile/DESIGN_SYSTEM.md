@@ -30,9 +30,12 @@ The CARENTA Mobile Design System establishes a cohesive, native, banking-grade v
 | `blue` | `#2563EB` | Blue Accent — Analytical indicators, category tags | 4.56 : 1 (AA Pass) |
 | `savings` / `coral` | `#F43F5E` | Piggy Coral Accent — Savings tab, goal progress, targets | 3.65 : 1 (Large Text Pass) |
 | `savingsTint` | `#FFE4E6` | Coral Light Tint — Piggy bank cards, goal badge backgrounds | — |
-| `emerald` / `success`| `#10B981` | Success Emerald — Within-budget indicator, confirmed transactions | 3.12 : 1 (UI Component Pass) |
-| `amber` / `warning` | `#F59E0B` | Warning Amber — Budget nearing limit, caution prompts | 2.14 : 1 (Decorative/Badge) |
-| `danger` / `error` | `#EF4444` | Danger Red — Overspending alerts, delete actions, error toasts | 3.98 : 1 (Large Text Pass) |
+| `emerald` / `success`| `#10B981` | Success Emerald — Within-budget indicator, confirmed transactions | 3.12 : 1 (UI Component Pass; pair with `successSoft` + `text` for icons) |
+| `successSoft` | `#DCFCE7` | Soft Emerald Tint — Accessible badge background for `Toast` (`success`) | — |
+| `amber` / `warning` | `#F59E0B` | Warning Amber — Budget nearing limit, caution prompts | 2.14 : 1 (Decorative; pair with `warningSoft` + `text` for icons) |
+| `warningSoft` | `#FEF3C7` | Soft Amber Tint — Accessible badge background for `Toast` (`warning`) | — |
+| `danger` / `error` | `#EF4444` | Danger Red — Overspending alerts, delete actions, error toasts | 3.98 : 1 (Large Text Pass; pair with `dangerSoft` + `text` for icons) |
+| `dangerSoft` | `#FEE2E2` | Soft Red Tint — Accessible badge background for `Toast` (`error`) | — |
 | `background` | `#F8FAFC` | App Background — Neutral cool-gray surface | — |
 | `surfaceCard` | `#FFFFFF` | Card & Sheet Surface — Pure white container cards | — |
 | `surfaceAlt` | `#F1F5F9` | Secondary Surface — Inactive buttons, chips, divider bands | — |
@@ -100,7 +103,7 @@ import { Card } from '../components/Card';
 
 // Standard Elevated Card
 <Card variant="elevated" padding="lg">
-  <Text style={typography.heading}>Tổng số dư khả dụng</Text>
+  <Text style={typography.heading}>Tổng số dư ghi nhận</Text>
 </Card>
 
 // Outlined Clickable Card

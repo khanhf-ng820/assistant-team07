@@ -11,30 +11,55 @@ export const colors = {
   // Canonical Brand & Core Tokens (Figma Design System)
   primary: '#0F766E', // Primary Teal
   primaryDark: '#115E59',
+  primaryButton: '#1E655A',
   primaryLight: '#CCFBF1',
+  primarySoft: '#E6F4F1',
+  primaryTint: '#F0FDFA',
   blue: '#2563EB', // Blue Accent
+  accentBlue: '#3B82F6',
   savings: '#F43F5E', // Piggy Coral Accent
-  savingsTint: '#FFE4E6', // Coral Light Tint (from main / PR #62)
+  savingsTint: '#FFE4E6', // Coral Light Tint (PR #62)
   emerald: '#10B981', // Success Emerald
   amber: '#F59E0B', // Warning Amber
+  warningSoft: '#FEF3C7', // Soft Amber Tint for accessible badge backgrounds
   danger: '#EF4444', // Danger Alert Red
+
+  // Status Tints & Text (PR #72 / Calendar & Ledger)
+  successLight: '#ECFDF5',
+  successSoft: '#DCFCE7',
+  successBorder: '#A7F3D0',
+  successText: '#15803D',
+  dangerLight: '#FEF2F2',
+  dangerSoft: '#FEE2E2',
+  dangerText: '#DC2626',
 
   // Surfaces & Backgrounds
   background: '#F8FAFC',
   surface: '#FFFFFF',
   surfaceCard: '#FFFFFF',
   surfaceAlt: '#F1F5F9',
+  surfaceSubtle: '#F1F5F9',
 
   // Typography & Borders
   text: '#0F172A',
   textSecondary: '#475569',
   muted: '#475569',
+  subtle: '#94A3B8',
   border: '#E2E8F0',
-  borderLight: '#F1F5F9',
+  borderSubtle: '#F1F5F9',
+  borderStrong: '#CBD5E1',
 
-  // Overlays
+  // Interactive & Input Tokens (PR #72)
+  pillBg: '#F1F5F9',
+  pillActive: '#0F766E',
+  keypadBg: '#FFFFFF',
+  keypadBorder: '#E2E8F0',
+
+  // Overlays & Shadows
   overlay: 'rgba(15, 23, 42, 0.65)',
-  overlayLight: 'rgba(255, 255, 255, 0.85)',
+  overlayBackdrop: 'rgba(15, 23, 42, 0.45)',
+  overlayBackdropDark: 'rgba(15, 23, 42, 0.5)',
+  shadow: '#0F172A',
 
   // Semantic & Backward-Compatibility Aliases
   coral: '#F43F5E', // Alias for savings
@@ -94,10 +119,21 @@ export const shadows = {
 };
 
 export const typography = {
+  amountHero: {
+    fontSize: 36,
+    fontWeight: '800' as const,
+    letterSpacing: -0.5,
+    fontFamily: fontFamilies.heading,
+  },
   heroAmount: {
     fontSize: 32,
     fontWeight: '700' as const,
     lineHeight: 40,
+    fontFamily: fontFamilies.heading,
+  },
+  amountDisplay: {
+    fontSize: 28,
+    fontWeight: '700' as const,
     fontFamily: fontFamilies.heading,
   },
   title: {

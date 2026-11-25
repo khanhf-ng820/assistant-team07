@@ -10,9 +10,11 @@ function TemplateTabBar({ state, descriptors, emitter, navigateToTab, insets }: 
   // Identify routes dynamically
   const statsIndex = state.routes.findIndex((r) => r.name === 'index');
   const savingsIndex = state.routes.findIndex((r) => r.name === 'savings');
+  const resolvedStatsIndex = statsIndex >= 0 ? statsIndex : 0;
+  const resolvedSavingsIndex = savingsIndex >= 0 ? savingsIndex : 1;
 
-  const statsRoute = statsIndex >= 0 ? state.routes[statsIndex] : state.routes[0];
-  const savingsRoute = savingsIndex >= 0 ? state.routes[savingsIndex] : state.routes[1];
+  const statsRoute = state.routes[resolvedStatsIndex];
+  const savingsRoute = state.routes[resolvedSavingsIndex];
 
   const renderTab = (route: typeof statsRoute, index: number) => {
     if (!route) return null;
@@ -64,7 +66,7 @@ function TemplateTabBar({ state, descriptors, emitter, navigateToTab, insets }: 
       >
         {/* Slot 1: Thống kê */}
         <View style={styles.tabSlot}>
-          {renderTab(statsRoute, statsIndex >= 0 ? statsIndex : 0)}
+          {renderTab(statsRoute, resolvedStatsIndex)}
         </View>
 
         {/* Slot 2: Floating 56x56 + Button raised 12px */}
@@ -85,7 +87,7 @@ function TemplateTabBar({ state, descriptors, emitter, navigateToTab, insets }: 
 
         {/* Slot 3: Tiết kiệm */}
         <View style={styles.tabSlot}>
-          {renderTab(savingsRoute, savingsIndex >= 0 ? savingsIndex : 1)}
+          {renderTab(savingsRoute, resolvedSavingsIndex)}
         </View>
       </View>
 

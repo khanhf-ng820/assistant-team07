@@ -9,34 +9,52 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useLedger } from '../context/LedgerContext';
 import { Button } from './Button';
 import { colors, radius, shadows, spacing, typography } from '../theme';
+
+export type CaptureMethodId = 'manual' | 'ocr' | 'voice';
 
 export interface CaptureChooserProps {
   visible: boolean;
   onClose: () => void;
   onSelectManual?: () => void;
-  onSelectMethod?: (method: string) => void;
+  onManualSelect?: () => void;
+  onSelectMethod?: (method: CaptureMethodId) => void;
 }
 
 interface ActionOption {
+  id: CaptureMethodId;
   method: string;
   icon: string;
   description: string;
 }
 
 const ACTION_OPTIONS: ActionOption[] = [
-  { method: 'Nhập thủ công', icon: '⌨️', description: 'Gõ số tiền và phân loại' },
-  { method: 'Quét hóa đơn', icon: '📷', description: 'Chụp hoặc tải ảnh hóa đơn' },
-  { method: 'Ghi âm', icon: '🎙️', description: 'Nói khoản chi bằng giọng nói' },
+  { id: 'manual', method: 'Nhập thủ công', icon: '⌨️', description: 'Gõ số tiền và phân loại' },
+  { id: 'ocr', method: 'Quét hóa đơn', icon: '📷', description: 'Chụp hoặc tải ảnh hóa đơn' },
+  { id: 'voice', method: 'Ghi âm', icon: '🎙️', description: 'Nói khoản chi bằng giọng nói' },
 ];
 
 export function CaptureChooser({
   visible,
   onClose,
   onSelectManual,
+  onManualSelect,
   onSelectMethod,
 }: CaptureChooserProps) {
+  let openManualEntryFromContext: (() => void) | undefined;
+  try {
+    // Safe lookup when rendered inside LedgerProvider
+    const ledger = useLedger();
+    openManualEntryFromContext = ledger.openManualEntry;
+  } catch {
+    // Graceful fallback when rendered in isolated test environments
+  }
+
+  const manualHandler = onSelectManual ?? onManualSelect ?? openManualEntryFromContext;
+  const hasManualSupport = Boolean(manualHandler || onSelectMethod);
+
   return (
     <Modal
       testID="capture-modal"
@@ -45,21 +63,23 @@ export function CaptureChooser({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <SafeAreaView style={styles.overlay}>
-        {/* Backdrop dismiss pressable */}
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Đóng bằng cách nhấn ngoài"
-          style={StyleSheet.absoluteFill}
-          onPress={onClose}
-        />
-
+      <SafeAreaView accessibilityViewIsModal style={styles.overlay}>
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
         >
+          {/* Backdrop dismiss sits inside ScrollView content so touches outside the sheet are not intercepted */}
+          <Pressable
+            testID="capture-backdrop"
+            accessibilityRole="button"
+            accessibilityLabel="Đóng bằng cách nhấn ngoài"
+            style={StyleSheet.absoluteFill}
+            onPress={onClose}
+          />
+
           <View
-            accessibilityViewIsModal
+            testID="capture-sheet"
+            onStartShouldSetResponder={() => true}
             style={[styles.sheet, shadows.lg]}
           >
             <View style={styles.header}>
@@ -67,30 +87,31 @@ export function CaptureChooser({
                 Chọn cách ghi giao dịch
               </Text>
               <Text style={styles.body}>
-                Bản mẫu chưa hỗ trợ ghi giao dịch.
+                {hasManualSupport
+                  ? 'Chọn phương thức để ghi nhận khoản chi tiêu mới.'
+                  : 'Bản mẫu chưa hỗ trợ ghi giao dịch.'}
               </Text>
             </View>
 
             <View style={styles.optionsList}>
-              {ACTION_OPTIONS.map(({ method, icon, description }) => {
-                const isManual = method === 'Nhập thủ công';
-                const isEnabled = isManual && Boolean(onSelectManual);
+              {ACTION_OPTIONS.map(({ id, method, icon, description }) => {
+                const isEnabled = id === 'manual' && hasManualSupport;
                 const label = isEnabled ? method : `${method} — Chưa triển khai`;
 
                 return (
                   <Pressable
-                    key={method}
+                    key={id}
+                    testID={id === 'manual' ? 'capture-option-manual' : `capture-option-${id}`}
                     accessibilityRole="button"
                     accessibilityLabel={label}
                     accessibilityState={{ disabled: !isEnabled }}
                     disabled={!isEnabled}
                     style={[styles.option, isEnabled && styles.optionEnabled]}
                     onPress={() => {
-                      if (isEnabled) {
-                        onClose();
-                        onSelectManual?.();
-                        onSelectMethod?.(method);
-                      }
+                      if (!isEnabled) return;
+                      onClose();
+                      manualHandler?.();
+                      onSelectMethod?.(id);
                     }}
                   >
                     <View style={styles.iconCircle}>
@@ -128,8 +149,6 @@ const styles = StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: colors.overlay,
-    padding: spacing.xl,
-    justifyContent: 'center',
     // Platform web blur backdrop filter; native platforms use translucent dimmed scrim colors.overlay
     ...Platform.select({
       web: {
@@ -141,6 +160,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     justifyContent: 'center',
+    padding: spacing.xl,
   },
   sheet: {
     backgroundColor: colors.surfaceCard,
@@ -215,7 +235,6 @@ const styles = StyleSheet.create({
   },
   badgeText: {
     ...typography.caption,
-    fontSize: 11,
     color: colors.muted,
     fontWeight: '500',
   },

@@ -42,11 +42,11 @@ export function Button({
 }: ButtonProps) {
   const isInteractive = !disabled && !loading;
 
-  // Sizing maps (maintaining >= 48dp touch target)
+  // Sizing maps (maintaining >= 48x48dp touch target)
   const sizeStyles: Record<ButtonSize, ViewStyle> = {
-    sm: { minHeight: 48, paddingVertical: spacing.sm, paddingHorizontal: spacing.md },
-    md: { minHeight: 48, paddingVertical: spacing.md, paddingHorizontal: spacing.lg },
-    lg: { minHeight: 56, paddingVertical: spacing.md, paddingHorizontal: spacing.xl },
+    sm: { minWidth: 48, minHeight: 48, paddingVertical: spacing.sm, paddingHorizontal: spacing.md },
+    md: { minWidth: 48, minHeight: 48, paddingVertical: spacing.md, paddingHorizontal: spacing.lg },
+    lg: { minWidth: 48, minHeight: 56, paddingVertical: spacing.md, paddingHorizontal: spacing.xl },
   };
 
   // Backgrounds & borders by variant

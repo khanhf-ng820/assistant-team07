@@ -9,15 +9,47 @@ import {
 } from 'react-native';
 import { colors, radius, shadows, spacing, typography } from '../theme';
 
+export type ToastType = 'success' | 'warning' | 'error' | 'info';
+
 export interface ToastProps {
   visible: boolean;
   message: string;
-  type?: 'success' | 'warning' | 'error' | 'info';
+  type?: ToastType;
   duration?: number;
   onDismiss?: () => void;
   style?: StyleProp<ViewStyle>;
   testID?: string;
 }
+
+export const TOAST_BADGE_CONFIG: Record<
+  ToastType,
+  { bg: string; fg: string; icon: string; label: string }
+> = {
+  success: {
+    bg: colors.successSoft,
+    fg: colors.text,
+    icon: '✓',
+    label: 'Thành công',
+  },
+  warning: {
+    bg: colors.warningSoft,
+    fg: colors.text,
+    icon: '!',
+    label: 'Cảnh báo',
+  },
+  error: {
+    bg: colors.dangerSoft,
+    fg: colors.text,
+    icon: '✕',
+    label: 'Lỗi',
+  },
+  info: {
+    bg: colors.primaryLight,
+    fg: colors.text,
+    icon: 'ℹ',
+    label: 'Thông báo',
+  },
+};
 
 export function Toast({
   visible,
@@ -39,28 +71,7 @@ export function Toast({
 
   if (!visible) return null;
 
-  const typeConfig = {
-    success: {
-      bg: colors.emerald,
-      icon: '✓',
-      label: 'Thành công',
-    },
-    warning: {
-      bg: colors.amber,
-      icon: '!',
-      label: 'Cảnh báo',
-    },
-    error: {
-      bg: colors.danger,
-      icon: '✕',
-      label: 'Lỗi',
-    },
-    info: {
-      bg: colors.primary,
-      icon: 'ℹ',
-      label: 'Thông báo',
-    },
-  }[type];
+  const typeConfig = TOAST_BADGE_CONFIG[type];
 
   return (
     <View
@@ -70,8 +81,13 @@ export function Toast({
       accessibilityLabel={`${typeConfig.label}: ${message}`}
       style={[styles.container, shadows.lg, style]}
     >
-      <View style={[styles.badge, { backgroundColor: typeConfig.bg }]}>
-        <Text style={styles.badgeText}>{typeConfig.icon}</Text>
+      <View
+        testID={`${testID}-badge`}
+        style={[styles.badge, { backgroundColor: typeConfig.bg }]}
+      >
+        <Text style={[styles.badgeText, { color: typeConfig.fg }]}>
+          {typeConfig.icon}
+        </Text>
       </View>
       <Text style={styles.message} numberOfLines={2}>
         {message}
@@ -117,7 +133,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   badgeText: {
-    color: colors.surface,
     fontSize: 14,
     fontWeight: '700',
   },
