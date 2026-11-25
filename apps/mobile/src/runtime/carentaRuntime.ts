@@ -4,8 +4,10 @@ import {
   type BudgetConfigResponse,
   type BudgetSummaryQuery,
   type BudgetSummaryResponse,
+  type GoalAllocationRequest,
   type GoalCreate,
   type GoalResponse,
+  type GoalUpdate,
   type HealthResponse,
   type TransactionCreate,
   type TransactionListQuery,
@@ -23,6 +25,7 @@ import {
 import {
   ApiError,
   createAbortedError,
+  createStorageError,
   isApiError,
   isOfflineFallbackError,
   localizeTransportError,
@@ -99,6 +102,16 @@ export interface CarentaApiClient {
   ) => Promise<ReadResult<GoalResponse>>;
   setActiveGoal: (
     payload: GoalCreate,
+    today?: string,
+    options?: RequestOptions
+  ) => Promise<GoalResponse>;
+  updateActiveGoal: (
+    payload: GoalUpdate,
+    today?: string,
+    options?: RequestOptions
+  ) => Promise<GoalResponse>;
+  allocateToActiveGoal: (
+    payload: GoalAllocationRequest,
     today?: string,
     options?: RequestOptions
   ) => Promise<GoalResponse>;
@@ -245,8 +258,11 @@ export function createCarentaRuntime(options: CarentaRuntimeOptions): CarentaRun
     const task = storageQueue.then(async () => {
       try {
         await storage.clearSession();
-      } catch {
-        // Best-effort secure storage wipe.
+      } catch (err) {
+        if (isApiError(err) && err.code === 'STORAGE_CLEAR_FAILED') {
+          throw err;
+        }
+        throw createStorageError('STORAGE_CLEAR_FAILED', err);
       }
     });
     storageQueue = task.catch(() => {});
@@ -345,17 +361,37 @@ export function createCarentaRuntime(options: CarentaRuntimeOptions): CarentaRun
     });
   }
 
-  async function resetFailedRestore(): Promise<void> {
-    sessionEpoch += 1;
-    offlineCache.clear();
-    await clearStorageSerialized();
-    restoreSettled = true;
+  function deferRestoreRetry(message: string): void {
+    restoreSettled = false;
     commitSnapshot({
       status: 'signed_out',
       student: null,
-      error: null,
-      canRetryRestore: false,
+      error: message,
+      canRetryRestore: true,
     });
+  }
+
+  function asStorageClearError(err: unknown): ApiError {
+    return isApiError(err) && err.code === 'STORAGE_CLEAR_FAILED'
+      ? err
+      : createStorageError('STORAGE_CLEAR_FAILED', err);
+  }
+
+  async function resetFailedRestore(): Promise<void> {
+    sessionEpoch += 1;
+    offlineCache.clear();
+    try {
+      await clearStorageSerialized();
+      restoreSettled = true;
+      commitSnapshot({
+        status: 'signed_out',
+        student: null,
+        error: null,
+        canRetryRestore: false,
+      });
+    } catch (err) {
+      deferRestoreRetry(asStorageClearError(err).userMessage);
+    }
   }
 
   async function restore(restoreOptions?: { readonly force?: boolean }): Promise<void> {
@@ -419,19 +455,17 @@ export function createCarentaRuntime(options: CarentaRuntimeOptions): CarentaRun
 
         if (outcome.retryable && isApiError(outcome.error)) {
           // Transient startup refresh errors keep storage & cache intact for 1-tap retry.
-          restoreSettled = false;
-          commitSnapshot({
-            status: 'signed_out',
-            student: null,
-            error: outcome.error.userMessage,
-            canRetryRestore: true,
-          });
+          deferRestoreRetry(outcome.error.userMessage);
           return;
         }
 
         await resetFailedRestore();
-      } catch {
+      } catch (err) {
         if (sessionEpoch !== epochAtStart) return;
+        if (isApiError(err) && err.retryable) {
+          deferRestoreRetry(err.userMessage);
+          return;
+        }
         await resetFailedRestore();
       }
     })();
@@ -469,6 +503,7 @@ export function createCarentaRuntime(options: CarentaRuntimeOptions): CarentaRun
     // Advance epoch immediately so an overlapping restore() failure cannot wipe or swallow signIn().
     sessionEpoch += 1;
     const epochAtStart = sessionEpoch;
+    let expectedErrorEpoch = epochAtStart;
     commitSnapshot({
       status: snapshot.status,
       student: snapshot.student,
@@ -487,6 +522,7 @@ export function createCarentaRuntime(options: CarentaRuntimeOptions): CarentaRun
       sessionEpoch += 1;
       offlineCache.clear();
       const commitEpoch = sessionEpoch;
+      expectedErrorEpoch = commitEpoch;
       await persistSessionGuarded(nextSession, commitEpoch);
       if (sessionEpoch !== commitEpoch) {
         return;
@@ -500,7 +536,7 @@ export function createCarentaRuntime(options: CarentaRuntimeOptions): CarentaRun
         canRetryRestore: false,
       });
     } catch (err) {
-      if (sessionEpoch === epochAtStart) {
+      if (sessionEpoch === expectedErrorEpoch) {
         const msg = isApiError(err)
           ? err.userMessage
           : 'Đăng nhập không thành công. Vui lòng thử lại.';
@@ -518,21 +554,63 @@ export function createCarentaRuntime(options: CarentaRuntimeOptions): CarentaRun
   async function signOut(): Promise<void> {
     sessionEpoch += 1;
     offlineCache.clear();
+
+    if (options.authMode.kind === 'local_dev') {
+      currentSession = null;
+      restoreSettled = true;
+      commitSnapshot({
+        status: 'local_dev',
+        student: null,
+        error: null,
+        canRetryRestore: false,
+      });
+      return;
+    }
+
+    if (options.authMode.kind === 'misconfigured') {
+      currentSession = null;
+      restoreSettled = true;
+      commitSnapshot({
+        status: 'signed_out',
+        student: null,
+        error: options.authMode.error,
+        canRetryRestore: false,
+      });
+      return;
+    }
+
+    const signOutEpoch = sessionEpoch;
     const previousToken = currentSession?.accessToken;
+    try {
+      await clearStorageSerialized();
+    } catch (err) {
+      const clearErr = asStorageClearError(err);
+      if (sessionEpoch === signOutEpoch) {
+        commitSnapshot({
+          status: currentSession ? 'authenticated' : snapshot.status,
+          student: currentSession ? currentSession.user : snapshot.student,
+          error: clearErr.userMessage,
+          canRetryRestore: snapshot.canRetryRestore,
+        });
+      }
+      throw clearErr;
+    }
+
+    if (sessionEpoch !== signOutEpoch) {
+      return;
+    }
+
     currentSession = null;
     restoreSettled = true;
     commitSnapshot({
-      status: options.authMode.kind === 'local_dev' ? 'local_dev' : 'signed_out',
+      status: 'signed_out',
       student: null,
       error: null,
       canRetryRestore: false,
     });
 
-    if (options.authMode.kind === 'authenticated') {
-      await clearStorageSerialized();
-      if (previousToken) {
-        await options.authMode.authGateway.signOut(previousToken);
-      }
+    if (previousToken) {
+      await options.authMode.authGateway.signOut(previousToken);
     }
   }
 
@@ -768,6 +846,18 @@ export function createCarentaRuntime(options: CarentaRuntimeOptions): CarentaRun
     },
     setActiveGoal: (payload, today, reqOptions) =>
       requestJson(`/api/v1/goal${buildQuery({ today })}`, parseGoal, {
+        method: 'POST',
+        body: payload,
+        signal: reqOptions?.signal,
+      }),
+    updateActiveGoal: (payload, today, reqOptions) =>
+      requestJson(`/api/v1/goal${buildQuery({ today })}`, parseGoal, {
+        method: 'PATCH',
+        body: payload,
+        signal: reqOptions?.signal,
+      }),
+    allocateToActiveGoal: (payload, today, reqOptions) =>
+      requestJson(`/api/v1/goal/allocate${buildQuery({ today })}`, parseGoal, {
         method: 'POST',
         body: payload,
         signal: reqOptions?.signal,

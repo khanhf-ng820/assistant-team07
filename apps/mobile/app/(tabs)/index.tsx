@@ -5,7 +5,7 @@ import { PlaceholderScreen } from '../../src/components/PlaceholderScreen';
 import { colors, type } from '../../src/theme';
 
 function SessionStatusBar() {
-  const { status, student, signOut } = useAuth();
+  const { status, student, error, signOut } = useAuth();
   if (status === 'local_dev') {
     return (
       <Text style={styles.localNote}>
@@ -15,18 +15,27 @@ function SessionStatusBar() {
   }
   if (status === 'authenticated' && student) {
     return (
-      <View style={styles.sessionRow}>
-        <Text style={styles.userText}>{student.email ?? student.id}</Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Đăng xuất"
-          onPress={() => {
-            void signOut();
-          }}
-          style={styles.logoutButton}
-        >
-          <Text style={styles.logoutText}>Đăng xuất</Text>
-        </Pressable>
+      <View style={styles.sessionContainer}>
+        <View style={styles.sessionRow}>
+          <Text style={styles.userText}>{student.email ?? student.id}</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Đăng xuất"
+            onPress={() => {
+              void signOut().catch(() => {
+                // Auth snapshot surfaces storage clear errors below.
+              });
+            }}
+            style={styles.logoutButton}
+          >
+            <Text style={styles.logoutText}>Đăng xuất</Text>
+          </Pressable>
+        </View>
+        {error ? (
+          <Text accessibilityLiveRegion="polite" style={styles.errorText}>
+            {error}
+          </Text>
+        ) : null}
       </View>
     );
   }
@@ -44,14 +53,15 @@ export default function StatsScreen() {
 
 const styles = StyleSheet.create({
   localNote: { ...type.caption, color: colors.muted },
+  sessionContainer: { gap: 8, paddingTop: 4 },
   sessionRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
-    paddingTop: 4,
   },
   userText: { ...type.caption, color: colors.text, flexShrink: 1 },
+  errorText: { ...type.caption, color: colors.danger, fontWeight: '600' },
   logoutButton: {
     minHeight: 48,
     paddingHorizontal: 14,

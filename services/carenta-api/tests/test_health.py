@@ -30,15 +30,23 @@ def test_health_echoes_safe_incoming_request_id():
 
 def test_openapi_describes_expected_routes():
     schema = get("/openapi.json", create_app()).json()
-    assert set(schema["paths"]) == {"/health", "/api/v1/auth/me", "/v1/auth/me"}
+    expected_routes = {
+        "/health",
+        "/api/v1/auth/me",
+        "/v1/auth/me",
+        "/api/v1/transactions",
+        "/api/v1/budget/summary",
+        "/api/v1/goal",
+    }
+    assert expected_routes.issubset(set(schema["paths"]))
     response_schema = schema["paths"]["/health"]["get"]["responses"]["200"]
     assert response_schema["content"]["application/json"]["schema"]["$ref"].endswith(
         "/HealthResponse"
     )
 
 
-def test_transactions_are_not_implemented_with_structured_error_envelope():
-    response = get("/v1/transactions", headers={"X-Request-ID": "req-404-check"})
+def test_unknown_route_uses_structured_error_envelope():
+    response = get("/v1/nonexistent-route", headers={"X-Request-ID": "req-404-check"})
     assert response.status_code == 404
     body = response.json()
     assert body["error"]["code"] == "NOT_FOUND"

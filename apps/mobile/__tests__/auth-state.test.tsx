@@ -350,4 +350,143 @@ describe('AuthProvider and SignInGate', () => {
     expect(screen.queryByText('sv@hcmus.edu.vn')).toBeNull();
     await expect(storage.getSession()).resolves.toBeNull();
   });
+
+  it('offers 1-tap restore retry on SignInGate when storage read fails natively', async () => {
+    const validSession = makeSession();
+    const clearSession = jest.fn(async () => {});
+    const getSession = jest
+      .fn<Promise<AuthSession | null>, []>()
+      .mockRejectedValueOnce(
+        new ApiError({
+          code: 'STORAGE_READ_FAILED',
+          message: 'Keychain locked',
+          retryable: true,
+          userMessage: 'Không thể đọc phiên đăng nhập từ bộ nhớ bảo mật. Vui lòng thử lại.',
+        })
+      )
+      .mockResolvedValueOnce(validSession);
+
+    const runtime = createCarentaRuntime({
+      apiBaseUrl: 'http://example.test',
+      authMode: {
+        kind: 'authenticated',
+        storage: { getSession, setSession: jest.fn(async () => {}), clearSession },
+        authGateway: {
+          signInWithPassword: jest.fn(async () => validSession),
+          refreshSession: jest.fn(async () => validSession),
+          signOut: jest.fn(async () => {}),
+        },
+      },
+    });
+
+    await render(
+      <AuthProvider runtime={runtime}>
+        <ProtectedProbe />
+      </AuthProvider>
+    );
+
+    expect(
+      await screen.findByText('Không thể đọc phiên đăng nhập từ bộ nhớ bảo mật. Vui lòng thử lại.')
+    ).toBeVisible();
+    expect(clearSession).not.toHaveBeenCalled();
+
+    await fireEvent.press(screen.getByRole('button', { name: 'Thử khôi phục phiên' }));
+    expect(await screen.findByTestId('auth-status')).toHaveTextContent('authenticated');
+  });
+
+  it('surfaces error in SessionStatusBar and keeps user signed in when signOut storage wipe fails until retry succeeds', async () => {
+    const validSession = makeSession();
+    const clearSession = jest
+      .fn<Promise<void>, []>()
+      .mockRejectedValueOnce(
+        new ApiError({
+          code: 'STORAGE_CLEAR_FAILED',
+          message: 'Keychain busy',
+          retryable: true,
+          userMessage:
+            'Không thể xóa phiên đăng nhập khỏi bộ nhớ bảo mật. Vui lòng thử đăng xuất lại.',
+        })
+      )
+      .mockResolvedValueOnce(undefined);
+
+    const runtime = createCarentaRuntime({
+      apiBaseUrl: 'http://example.test',
+      authMode: {
+        kind: 'authenticated',
+        storage: {
+          getSession: jest.fn(async () => validSession),
+          setSession: jest.fn(async () => {}),
+          clearSession,
+        },
+        authGateway: {
+          signInWithPassword: jest.fn(async () => validSession),
+          refreshSession: jest.fn(async () => validSession),
+          signOut: jest.fn(async () => {}),
+        },
+      },
+    });
+
+    await render(
+      <AuthProvider runtime={runtime}>
+        <StatsScreen />
+      </AuthProvider>
+    );
+
+    expect(await screen.findByText('sv@hcmus.edu.vn')).toBeVisible();
+    await fireEvent.press(screen.getByRole('button', { name: 'Đăng xuất' }));
+
+    expect(
+      await screen.findByText(
+        'Không thể xóa phiên đăng nhập khỏi bộ nhớ bảo mật. Vui lòng thử đăng xuất lại.'
+      )
+    ).toBeVisible();
+    expect(screen.getByText('sv@hcmus.edu.vn')).toBeVisible();
+
+    await fireEvent.press(screen.getByRole('button', { name: 'Đăng xuất' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Đăng xuất' })).toBeNull();
+    });
+  });
+
+  it('surfaces localized STORAGE_WRITE_FAILED error on SignInGate when setSession fails during signIn', async () => {
+    const baseStorage = createMemorySessionStorage(null);
+    const createdSession = makeSession();
+    const storage = {
+      ...baseStorage,
+      setSession: jest.fn(async () => {
+        throw new ApiError({
+          code: 'STORAGE_WRITE_FAILED',
+          message: 'Keychain write blocked',
+          retryable: true,
+          userMessage: 'Không thể lưu phiên đăng nhập vào bộ nhớ bảo mật. Vui lòng thử lại.',
+        });
+      }),
+    };
+    const authGateway: AuthGateway = {
+      signInWithPassword: jest.fn(async () => createdSession),
+      refreshSession: jest.fn(async () => createdSession),
+      signOut: jest.fn(async () => {}),
+    };
+
+    const runtime = createCarentaRuntime({
+      apiBaseUrl: 'http://example.test',
+      authMode: { kind: 'authenticated', storage, authGateway },
+    });
+
+    await render(
+      <AuthProvider runtime={runtime}>
+        <ProtectedProbe />
+      </AuthProvider>
+    );
+
+    expect(await screen.findByText('Đăng nhập CARENTA')).toBeVisible();
+    await fireEvent.changeText(screen.getByLabelText('Email'), 'sv@hcmus.edu.vn');
+    await fireEvent.changeText(screen.getByLabelText('Mật khẩu'), 'secret-pass');
+    await fireEvent.press(screen.getByRole('button', { name: 'Đăng nhập' }));
+
+    expect(
+      await screen.findByText('Không thể lưu phiên đăng nhập vào bộ nhớ bảo mật. Vui lòng thử lại.')
+    ).toBeVisible();
+    expect(screen.getByText('Đăng nhập CARENTA')).toBeVisible();
+  });
 });

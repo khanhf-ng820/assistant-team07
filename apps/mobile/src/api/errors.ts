@@ -17,7 +17,10 @@ export type ApiErrorCode =
   | 'RATE_LIMITED'
   | 'INTERNAL_ERROR'
   | 'SERVER_ERROR'
-  | 'HTTP_ERROR';
+  | 'HTTP_ERROR'
+  | 'STORAGE_READ_FAILED'
+  | 'STORAGE_WRITE_FAILED'
+  | 'STORAGE_CLEAR_FAILED';
 
 export interface ApiErrorOptions {
   code: ApiErrorCode | (string & {});
@@ -76,7 +79,31 @@ const VIETNAMESE_CODE_MESSAGES: Record<string, string> = {
   RATE_LIMITED: 'Bạn thao tác quá nhanh, vui lòng thử lại sau ít phút.',
   INTERNAL_ERROR: 'Máy chủ đang gặp sự cố, vui lòng thử lại sau.',
   SERVER_ERROR: 'Máy chủ đang bận, vui lòng thử lại sau.',
+  STORAGE_READ_FAILED: 'Không thể đọc phiên đăng nhập từ bộ nhớ bảo mật. Vui lòng thử lại.',
+  STORAGE_WRITE_FAILED: 'Không thể lưu phiên đăng nhập vào bộ nhớ bảo mật. Vui lòng thử lại.',
+  STORAGE_CLEAR_FAILED: 'Không thể xóa phiên đăng nhập khỏi bộ nhớ bảo mật. Vui lòng thử đăng xuất lại.',
 };
+
+const STORAGE_FALLBACK_MESSAGES: Record<
+  'STORAGE_READ_FAILED' | 'STORAGE_WRITE_FAILED' | 'STORAGE_CLEAR_FAILED',
+  string
+> = {
+  STORAGE_READ_FAILED: 'Failed to read persisted Auth Session.',
+  STORAGE_WRITE_FAILED: 'Failed to persist Auth Session.',
+  STORAGE_CLEAR_FAILED: 'Failed to clear persisted Auth Session.',
+};
+
+export function createStorageError(
+  code: 'STORAGE_READ_FAILED' | 'STORAGE_WRITE_FAILED' | 'STORAGE_CLEAR_FAILED',
+  cause?: unknown
+): ApiError {
+  return new ApiError({
+    code,
+    message: cause instanceof Error && cause.message ? cause.message : STORAGE_FALLBACK_MESSAGES[code],
+    retryable: true,
+    userMessage: VIETNAMESE_CODE_MESSAGES[code],
+  });
+}
 
 function defaultCodeForStatus(status: number): ApiErrorCode {
   if (status === 400) return 'BAD_REQUEST';

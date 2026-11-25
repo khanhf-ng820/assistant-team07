@@ -1,4 +1,5 @@
 import * as SecureStore from 'expo-secure-store';
+import { ApiError } from '../src/api/errors';
 import * as storageModule from '../src/auth/storage';
 import { createSecureSessionStorage } from '../src/auth/storage';
 import type { AuthSession } from '../src/auth/types';
@@ -48,5 +49,52 @@ describe('createSecureSessionStorage', () => {
     await expect(storage.getSession()).resolves.toBeNull();
     expect(SecureStore.deleteItemAsync).toHaveBeenCalledTimes(2);
     expect('createMemorySessionStorage' in storageModule).toBe(false);
+  });
+
+  it('throws retryable STORAGE_READ_FAILED without deleting on native SecureStore read error', async () => {
+    const storage = createSecureSessionStorage();
+    (SecureStore.getItemAsync as jest.Mock).mockRejectedValueOnce(new Error('Keychain locked'));
+
+    await expect(storage.getSession()).rejects.toMatchObject({
+      name: 'ApiError',
+      code: 'STORAGE_READ_FAILED',
+      retryable: true,
+    });
+    expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();
+  });
+
+  it('throws retryable STORAGE_CLEAR_FAILED when SecureStore deleteItemAsync fails', async () => {
+    const storage = createSecureSessionStorage();
+    (SecureStore.deleteItemAsync as jest.Mock).mockRejectedValueOnce(
+      new Error('Keychain delete blocked')
+    );
+
+    await expect(storage.clearSession()).rejects.toBeInstanceOf(ApiError);
+    await expect(
+      (async () => {
+        (SecureStore.deleteItemAsync as jest.Mock).mockRejectedValueOnce(
+          new Error('Keychain delete blocked')
+        );
+        return storage.clearSession();
+      })()
+    ).rejects.toMatchObject({
+      code: 'STORAGE_CLEAR_FAILED',
+      retryable: true,
+    });
+
+    (SecureStore.setItemAsync as jest.Mock).mockRejectedValueOnce(
+      new Error('Keychain write blocked')
+    );
+    await expect(
+      storage.setSession({
+        accessToken: 'tok-1',
+        refreshToken: 'ref-1',
+        expiresAt: Math.floor(Date.now() / 1000) + 3600,
+        user: { id: 'u1', email: 'sv@hcmus.edu.vn', role: 'authenticated' },
+      })
+    ).rejects.toMatchObject({
+      code: 'STORAGE_WRITE_FAILED',
+      retryable: true,
+    });
   });
 });

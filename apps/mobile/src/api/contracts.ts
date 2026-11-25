@@ -20,7 +20,7 @@ export interface TransactionCreate {
   category: string;
   date: string;
   note?: string | null;
-  idempotency_key?: string | null;
+  idempotency_key: string;
 }
 
 export interface TransactionResponse {
@@ -30,6 +30,7 @@ export interface TransactionResponse {
   category: string;
   date: string;
   note?: string | null;
+  idempotency_key: string;
   created_at: string;
 }
 
@@ -50,8 +51,19 @@ export interface GoalCreate {
   title: string;
   target_amount: number;
   deadline: string;
-  initial_allocated?: number;
 }
+
+export interface GoalUpdate {
+  title?: string | null;
+  target_amount?: number | null;
+  deadline?: string | null;
+}
+
+export interface GoalAllocationRequest {
+  amount: number;
+}
+
+export type GoalStatus = 'on_track' | 'due_today' | 'overdue' | 'completed';
 
 export interface GoalResponse {
   id: string;
@@ -62,6 +74,7 @@ export interface GoalResponse {
   remaining_target: number;
   saving_days: number;
   suggested_daily_saving: number;
+  status: GoalStatus;
   is_completed: boolean;
   created_at: string;
 }
@@ -96,7 +109,6 @@ export interface BudgetConfigRequest {
   opening_balance?: number | null;
   unpaid_commitments?: number | null;
   savings_reserved?: number | null;
-  planning_days_remaining?: number | null;
 }
 
 export interface BudgetConfigResponse {
@@ -191,6 +203,7 @@ export function parseTransaction(body: unknown): TransactionResponse {
     category: asString(obj, 'category', 'TransactionResponse'),
     date: asString(obj, 'date', 'TransactionResponse'),
     note: asNullableString(obj, 'note', 'TransactionResponse'),
+    idempotency_key: asString(obj, 'idempotency_key', 'TransactionResponse'),
     created_at: asString(obj, 'created_at', 'TransactionResponse'),
   };
 }
@@ -208,8 +221,19 @@ export function parseTransactionList(body: unknown): TransactionListResponse {
   };
 }
 
+const VALID_GOAL_STATUSES: readonly GoalStatus[] = [
+  'on_track',
+  'due_today',
+  'overdue',
+  'completed',
+];
+
 export function parseGoal(body: unknown): GoalResponse {
   const obj = asRecord(body, 'GoalResponse');
+  const status = asString(obj, 'status', 'GoalResponse');
+  if (!VALID_GOAL_STATUSES.includes(status as GoalStatus)) {
+    unexpected('Expected valid GoalResponse.status');
+  }
   return {
     id: asString(obj, 'id', 'GoalResponse'),
     title: asString(obj, 'title', 'GoalResponse'),
@@ -219,6 +243,7 @@ export function parseGoal(body: unknown): GoalResponse {
     remaining_target: asSafeInteger(obj, 'remaining_target', 'GoalResponse'),
     saving_days: asSafeInteger(obj, 'saving_days', 'GoalResponse'),
     suggested_daily_saving: asSafeInteger(obj, 'suggested_daily_saving', 'GoalResponse'),
+    status: status as GoalStatus,
     is_completed: asBoolean(obj, 'is_completed', 'GoalResponse'),
     created_at: asString(obj, 'created_at', 'GoalResponse'),
   };

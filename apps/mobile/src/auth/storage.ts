@@ -1,4 +1,5 @@
 import * as SecureStore from 'expo-secure-store';
+import { createStorageError } from '../api/errors';
 import type { AuthSession, SessionStorage } from './types';
 
 const SESSION_KEY = 'carenta.auth.session.v1';
@@ -25,27 +26,41 @@ function isValidSession(value: unknown): value is AuthSession {
 export function createSecureSessionStorage(): SessionStorage {
   return {
     async getSession(): Promise<AuthSession | null> {
+      let raw: string | null;
       try {
-        const raw = await SecureStore.getItemAsync(SESSION_KEY);
-        if (!raw) return null;
+        raw = await SecureStore.getItemAsync(SESSION_KEY);
+      } catch (err) {
+        throw createStorageError('STORAGE_READ_FAILED', err);
+      }
+      if (!raw) return null;
+
+      try {
         const parsed: unknown = JSON.parse(raw);
         if (isValidSession(parsed)) return parsed;
-        await SecureStore.deleteItemAsync(SESSION_KEY);
-        return null;
       } catch {
-        try {
-          await SecureStore.deleteItemAsync(SESSION_KEY);
-        } catch {
-          // Ignore delete errors on corrupt storage cleanup.
-        }
-        return null;
+        // Fall through to best-effort cleanup of corrupt persisted payload.
       }
+
+      try {
+        await SecureStore.deleteItemAsync(SESSION_KEY);
+      } catch {
+        // Ignore delete errors during corrupt storage cleanup.
+      }
+      return null;
     },
     async setSession(session: AuthSession): Promise<void> {
-      await SecureStore.setItemAsync(SESSION_KEY, JSON.stringify(session));
+      try {
+        await SecureStore.setItemAsync(SESSION_KEY, JSON.stringify(session));
+      } catch (err) {
+        throw createStorageError('STORAGE_WRITE_FAILED', err);
+      }
     },
     async clearSession(): Promise<void> {
-      await SecureStore.deleteItemAsync(SESSION_KEY);
+      try {
+        await SecureStore.deleteItemAsync(SESSION_KEY);
+      } catch (err) {
+        throw createStorageError('STORAGE_CLEAR_FAILED', err);
+      }
     },
   };
 }

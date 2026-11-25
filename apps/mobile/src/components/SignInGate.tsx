@@ -139,7 +139,7 @@ const styles = StyleSheet.create({
     color: colors.text,
     backgroundColor: colors.background,
   },
-  errorText: { ...type.caption, color: '#DC2626', fontWeight: '600' },
+  errorText: { ...type.caption, color: colors.danger, fontWeight: '600' },
   retryButton: {
     minHeight: 48,
     borderRadius: 12,

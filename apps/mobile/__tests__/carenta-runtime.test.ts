@@ -60,6 +60,7 @@ const sampleTransaction = {
   category: 'food',
   date: '2026-11-21',
   note: 'Com suon',
+  idempotency_key: 'idem-12345678',
   created_at: '2026-11-21T05:00:00Z',
 };
 
@@ -79,6 +80,7 @@ const sampleGoal = {
   remaining_target: 750_000,
   saving_days: 30,
   suggested_daily_saving: 25_000,
+  status: 'on_track',
   is_completed: false,
   created_at: '2026-11-01T00:00:00Z',
 };
@@ -333,7 +335,6 @@ describe('CarentaRuntime FastAPI contracts & error normalization', () => {
         title: 'Laptop moi',
         target_amount: 2_000_000,
         deadline: '2026-12-21',
-        initial_allocated: 1_250_000,
       })
     ).resolves.toEqual(sampleGoal);
     await expect(runtime.apiClient.getActiveGoal()).resolves.toEqual({
@@ -345,8 +346,13 @@ describe('CarentaRuntime FastAPI contracts & error normalization', () => {
         title: 'Laptop moi',
         target_amount: 2_000_000,
         deadline: '2026-12-21',
-        initial_allocated: 1_250_000,
       })
+    ).resolves.toEqual(sampleGoal);
+    await expect(
+      runtime.apiClient.updateActiveGoal({ target_amount: 2_500_000 })
+    ).resolves.toEqual(sampleGoal);
+    await expect(
+      runtime.apiClient.allocateToActiveGoal({ amount: 200_000 })
     ).resolves.toEqual(sampleGoal);
 
     const authHeaderCalls = fetchMock.mock.calls.filter(([u]) => !String(u).endsWith('/health'));
@@ -385,7 +391,8 @@ describe('CarentaRuntime FastAPI contracts & error normalization', () => {
           422
         )
       )
-      .mockResolvedValueOnce(jsonResponse({ ...sampleTransaction, amount: 35.5 }));
+      .mockResolvedValueOnce(jsonResponse({ ...sampleTransaction, amount: 35.5 }))
+      .mockResolvedValueOnce(jsonResponse({ ...sampleGoal, status: 'bogus_status' }));
 
     const runtime = createCarentaRuntime({
       apiBaseUrl: 'http://192.168.1.10:8000',
@@ -416,6 +423,7 @@ describe('CarentaRuntime FastAPI contracts & error normalization', () => {
         kind: 'expense',
         category: 'food',
         date: '2026-11-21',
+        idempotency_key: 'idem-422',
       })
     ).rejects.toMatchObject({
       code: 'VALIDATION_ERROR',
@@ -425,6 +433,11 @@ describe('CarentaRuntime FastAPI contracts & error normalization', () => {
     });
 
     await expect(runtime.apiClient.getTransaction('tx-1')).rejects.toMatchObject({
+      code: 'UNEXPECTED_RESPONSE',
+      retryable: false,
+    });
+
+    await expect(runtime.apiClient.getActiveGoal()).rejects.toMatchObject({
       code: 'UNEXPECTED_RESPONSE',
       retryable: false,
     });
@@ -879,6 +892,123 @@ describe('CarentaRuntime Auth Session lifecycle, concurrency fencing, and Q3 ref
       canRetryRestore: false,
     });
   });
+
+  it('preserves storage and offers canRetryRestore on STORAGE_READ_FAILED without deleting valid sessions', async () => {
+    const valid = makeSession();
+    const clearSession = jest.fn(async () => {});
+    const getSession = jest
+      .fn<Promise<AuthSession | null>, []>()
+      .mockRejectedValueOnce(
+        new ApiError({
+          code: 'STORAGE_READ_FAILED',
+          message: 'Keychain locked',
+          retryable: true,
+          userMessage: 'Không thể đọc phiên đăng nhập từ bộ nhớ bảo mật. Vui lòng thử lại.',
+        })
+      )
+      .mockResolvedValueOnce(valid);
+
+    const runtime = createCarentaRuntime({
+      apiBaseUrl: 'http://example.test',
+      authMode: {
+        kind: 'authenticated',
+        storage: { getSession, setSession: jest.fn(async () => {}), clearSession },
+        authGateway: {
+          signInWithPassword: jest.fn(async () => valid),
+          refreshSession: jest.fn(async () => valid),
+          signOut: jest.fn(async () => {}),
+        },
+      },
+      now: () => 1_700_000_000_000,
+    });
+
+    await runtime.restore();
+    expect(clearSession).not.toHaveBeenCalled();
+    expect(runtime.getSnapshot()).toMatchObject({
+      status: 'signed_out',
+      student: null,
+      error: 'Không thể đọc phiên đăng nhập từ bộ nhớ bảo mật. Vui lòng thử lại.',
+      canRetryRestore: true,
+    });
+
+    await runtime.restore({ force: true });
+    expect(runtime.getSnapshot()).toMatchObject({
+      status: 'authenticated',
+      student: valid.user,
+      error: null,
+      canRetryRestore: false,
+    });
+  });
+
+  it('keeps authenticated status with error and wipes Offline Fallback cache when signOut storage wipe fails', async () => {
+    const valid = makeSession();
+    const clearSession = jest
+      .fn<Promise<void>, []>()
+      .mockRejectedValueOnce(
+        new ApiError({
+          code: 'STORAGE_CLEAR_FAILED',
+          message: 'Keychain busy',
+          retryable: true,
+          userMessage:
+            'Không thể xóa phiên đăng nhập khỏi bộ nhớ bảo mật. Vui lòng thử đăng xuất lại.',
+        })
+      )
+      .mockResolvedValueOnce(undefined);
+
+    let offline = false;
+    const runtime = createCarentaRuntime({
+      apiBaseUrl: 'http://example.test',
+      authMode: {
+        kind: 'authenticated',
+        storage: {
+          getSession: jest.fn(async () => valid),
+          setSession: jest.fn(async () => {}),
+          clearSession,
+        },
+        authGateway: {
+          signInWithPassword: jest.fn(async () => valid),
+          refreshSession: jest.fn(async () => valid),
+          signOut: jest.fn(async () => {}),
+        },
+      },
+      httpTransport: createFetchTransport({
+        fetchImpl: (async () => {
+          if (offline) throw new TypeError('Offline');
+          return jsonResponse(sampleBudgetSummary);
+        }) as unknown as typeof fetch,
+      }),
+      now: () => 1_700_000_000_000,
+    });
+
+    await runtime.restore();
+    await expect(runtime.apiClient.getBudgetSummary()).resolves.toMatchObject({ fromCache: false });
+
+    await expect(runtime.signOut()).rejects.toMatchObject({
+      code: 'STORAGE_CLEAR_FAILED',
+      retryable: true,
+    });
+
+    // Must NOT appear signed_out while persisted Auth Session still exists
+    expect(runtime.getSnapshot()).toMatchObject({
+      status: 'authenticated',
+      student: valid.user,
+      error: 'Không thể xóa phiên đăng nhập khỏi bộ nhớ bảo mật. Vui lòng thử đăng xuất lại.',
+    });
+
+    // Offline Fallback cache was cleared synchronously even though storage deletion failed
+    offline = true;
+    await expect(runtime.apiClient.getBudgetSummary()).rejects.toMatchObject({
+      code: 'NETWORK_UNAVAILABLE',
+    });
+
+    // Retrying signOut succeeds once storage wipe succeeds
+    await runtime.signOut();
+    expect(runtime.getSnapshot()).toMatchObject({
+      status: 'signed_out',
+      student: null,
+      error: null,
+    });
+  });
 });
 
 describe('CarentaRuntime private (Student Identity, sessionEpoch) Offline Fallback', () => {
@@ -971,6 +1101,7 @@ describe('CarentaRuntime private (Student Identity, sessionEpoch) Offline Fallba
         kind: 'expense',
         category: 'food',
         date: '2026-11-21',
+        idempotency_key: 'idem-offline',
       })
     ).rejects.toMatchObject({ code: 'NETWORK_UNAVAILABLE', retryable: true });
 
