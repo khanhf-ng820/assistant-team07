@@ -1,0 +1,5 @@
+# Mobile Authentication and API Contract Boundary
+
+Status: accepted
+
+Mobile authenticates directly with Supabase Auth (sign-in and session refresh) and stores the Auth Session on-device using `expo-secure-store`, while routing all financial reads and writes through the FastAPI backend carrying the user's Bearer JWT rather than calling Supabase PostgreSQL directly or receiving `SUPABASE_SERVICE_ROLE_KEY`. Keeping business logic, deterministic budget rules, validation, and database access behind FastAPI preserves a single typed contract surface and prevents privileged credentials from ever entering the Expo bundle; direct client-side Supabase DB queries or shipping service keys would bypass server-side validation and expose row-level security boundaries. Offline financial write queuing is also explicitly excluded for Phase 1 so the server remains the single source of truth—Offline Fallback is strictly limited to read-only, Student-Identity-scoped cached snapshots (cleared on sign-out) and retryable network errors.
