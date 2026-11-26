@@ -75,7 +75,13 @@ uv run --env-file services/carenta-api/.env --project services/carenta-api uvico
 ```
 
 `.env` is ignored by Git. `app/settings.py` wraps the keys in `SecretStr` so
-they do not appear in logs or `repr`. The service-role key bypasses RLS: never
+they do not appear in logs or `repr`. `load_supabase_settings()` intentionally
+requires all three DB/admin variables (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, and
+`SUPABASE_SERVICE_ROLE_KEY`), whereas JWT-only API authentication uses
+`app/auth.py` (`load_auth_config()`) and starts cleanly with `SUPABASE_URL`
+(or `SUPABASE_JWT_SECRET`) alone; in secret-only mode (without
+`SUPABASE_URL`), issuer (`iss`) validation is skipped because the expected
+issuer is derived from `SUPABASE_URL`. The service-role key bypasses RLS: never
 copy it into `apps/mobile` or an `EXPO_PUBLIC_*` variable; a test checks that the
 mobile sources do not reference it.
 
