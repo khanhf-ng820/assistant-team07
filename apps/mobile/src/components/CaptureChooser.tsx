@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -9,46 +10,54 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLedger } from '../context/LedgerContext';
+import { Button } from './Button';
 import { colors, radius, shadows, spacing, typography } from '../theme';
 
-interface CaptureChooserProps {
+export type CaptureMethodId = 'manual' | 'ocr' | 'voice';
+
+export interface CaptureChooserProps {
   visible: boolean;
   onClose: () => void;
+  onSelectManual?: () => void;
   onManualSelect?: () => void;
+  /**
+   * Observer/telemetry callback fired when any capture method is tapped.
+   * Runs alongside the active manual handler (`onSelectManual` or `LedgerContext.openManualEntry`).
+   */
+  onSelectMethod?: (method: CaptureMethodId) => void;
 }
 
 interface ActionOption {
+  id: CaptureMethodId;
   method: string;
   icon: string;
   description: string;
 }
 
-const DISABLED_ACTIONS: ActionOption[] = [
-  { method: 'Quét hóa đơn', icon: '📷', description: 'Chụp hoặc tải ảnh hóa đơn' },
-  { method: 'Ghi âm', icon: '🎙️', description: 'Nói khoản chi bằng giọng nói' },
+const ACTION_OPTIONS: ActionOption[] = [
+  { id: 'manual', method: 'Nhập thủ công', icon: '⌨️', description: 'Gõ số tiền và phân loại' },
+  { id: 'ocr', method: 'Quét hóa đơn', icon: '📷', description: 'Chụp hoặc tải ảnh hóa đơn' },
+  { id: 'voice', method: 'Ghi âm', icon: '🎙️', description: 'Nói khoản chi bằng giọng nói' },
 ];
 
 export function CaptureChooser({
   visible,
   onClose,
+  onSelectManual,
   onManualSelect,
+  onSelectMethod,
 }: CaptureChooserProps) {
   let openManualEntryFromContext: (() => void) | undefined;
   try {
+    // Safe lookup when rendered inside LedgerProvider
     const ledger = useLedger();
     openManualEntryFromContext = ledger.openManualEntry;
   } catch {
-    // Isolated renders may not include LedgerProvider.
+    // Graceful fallback when rendered in isolated test environments
   }
 
-  const handleManualPress = () => {
-    onClose();
-    if (onManualSelect) {
-      onManualSelect();
-    } else if (openManualEntryFromContext) {
-      openManualEntryFromContext();
-    }
-  };
+  const manualHandler = onSelectManual ?? onManualSelect ?? openManualEntryFromContext;
+  const hasManualSupport = Boolean(manualHandler || onSelectMethod);
 
   return (
     <Modal
@@ -58,20 +67,23 @@ export function CaptureChooser({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <SafeAreaView style={styles.overlay}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Đóng bằng cách nhấn ngoài"
-          style={StyleSheet.absoluteFill}
-          onPress={onClose}
-        />
-
+      <SafeAreaView accessibilityViewIsModal style={styles.overlay}>
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
         >
+          {/* Backdrop dismiss sits inside ScrollView content so touches outside the sheet are not intercepted */}
+          <Pressable
+            testID="capture-backdrop"
+            accessibilityRole="button"
+            accessibilityLabel="Đóng bằng cách nhấn ngoài"
+            style={StyleSheet.absoluteFill}
+            onPress={onClose}
+          />
+
           <View
-            accessibilityViewIsModal
+            testID="capture-sheet"
+            onStartShouldSetResponder={() => true}
             style={[styles.sheet, shadows.lg]}
           >
             <View style={styles.header}>
@@ -79,69 +91,59 @@ export function CaptureChooser({
                 Chọn cách ghi giao dịch
               </Text>
               <Text style={styles.body}>
-                Chọn phương thức để ghi nhận khoản chi tiêu mới.
+                {hasManualSupport
+                  ? 'Chọn phương thức để ghi nhận khoản chi tiêu mới.'
+                  : 'Bản mẫu chưa hỗ trợ ghi giao dịch.'}
               </Text>
             </View>
 
             <View style={styles.optionsList}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Nhập thủ công"
-                onPress={handleManualPress}
-                style={({ pressed }) => [
-                  styles.option,
-                  styles.optionActive,
-                  pressed && styles.optionPressed,
-                ]}
-                testID="capture-option-manual"
-              >
-                <View style={styles.iconCircle}>
-                  <Text style={styles.iconText}>✍️</Text>
-                </View>
-                <View style={styles.optionContent}>
-                  <Text style={styles.methodTitle}>Nhập thủ công</Text>
-                  <Text style={styles.optionDescription}>
-                    Nhập số tiền bằng bàn phím số chuyển khoản ngân hàng
-                  </Text>
-                </View>
-              </Pressable>
+              {ACTION_OPTIONS.map(({ id, method, icon, description }) => {
+                const isEnabled = id === 'manual' && hasManualSupport;
+                const label = isEnabled ? method : `${method} — Chưa triển khai`;
 
-              {DISABLED_ACTIONS.map(({ method, icon, description }) => (
-                <Pressable
-                  key={method}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${method} — Chưa triển khai`}
-                  accessibilityState={{ disabled: true }}
-                  disabled
-                  style={[styles.option, styles.optionDisabled]}
-                >
-                  <View style={styles.iconCircle}>
-                    <Text style={styles.iconText}>{icon}</Text>
-                  </View>
-                  <View style={styles.optionContent}>
-                    <Text style={styles.methodTitle}>{method}</Text>
-                    <Text style={styles.optionDescription}>
-                      {description}
-                    </Text>
-                  </View>
-                  <View style={styles.badge}>
-                    <Text style={styles.badgeText}>Chưa triển khai</Text>
-                  </View>
-                </Pressable>
-              ))}
+                return (
+                  <Pressable
+                    key={id}
+                    testID={id === 'manual' ? 'capture-option-manual' : `capture-option-${id}`}
+                    accessibilityRole="button"
+                    accessibilityLabel={label}
+                    accessibilityState={{ disabled: !isEnabled }}
+                    disabled={!isEnabled}
+                    style={[styles.option, isEnabled && styles.optionEnabled]}
+                    onPress={() => {
+                      if (!isEnabled) return;
+                      onClose();
+                      // Trigger manual entry handler (prop override or LedgerContext.openManualEntry)
+                      manualHandler?.();
+                      // Notify method selection observer if registered
+                      onSelectMethod?.(id);
+                    }}
+                  >
+                    <View style={styles.iconCircle}>
+                      <Text style={styles.iconText}>{icon}</Text>
+                    </View>
+                    <View style={styles.optionContent}>
+                      <Text style={styles.methodTitle}>{method}</Text>
+                      <Text style={styles.optionDescription}>{description}</Text>
+                    </View>
+                    <View style={[styles.badge, isEnabled && styles.badgeEnabled]}>
+                      <Text style={[styles.badgeText, isEnabled && styles.badgeTextEnabled]}>
+                        {isEnabled ? 'Sẵn sàng' : 'Chưa triển khai'}
+                      </Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
             </View>
 
-            <Pressable
-              accessibilityRole="button"
+            <Button
+              title="Đóng"
+              variant="primary"
               accessibilityLabel="Đóng lựa chọn"
               onPress={onClose}
-              style={({ pressed }) => [
-                styles.closeButton,
-                pressed && styles.closePressed,
-              ]}
-            >
-              <Text style={styles.closeText}>Đóng</Text>
-            </Pressable>
+              style={styles.closeButton}
+            />
           </View>
         </ScrollView>
       </SafeAreaView>
@@ -153,12 +155,18 @@ const styles = StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: colors.overlay,
-    padding: spacing.xl,
-    justifyContent: 'center',
+    // Platform web blur backdrop filter; native platforms use translucent dimmed scrim colors.overlay
+    ...Platform.select({
+      web: {
+        backdropFilter: 'blur(16px)',
+        WebkitBackdropFilter: 'blur(16px)',
+      },
+    }),
   },
   scrollContent: {
     flexGrow: 1,
     justifyContent: 'center',
+    padding: spacing.xl,
   },
   sheet: {
     backgroundColor: colors.surfaceCard,
@@ -190,16 +198,12 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: radius.lg,
     backgroundColor: colors.background,
-  },
-  optionActive: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primaryTint,
-  },
-  optionDisabled: {
     opacity: 0.75,
   },
-  optionPressed: {
-    opacity: 0.88,
+  optionEnabled: {
+    opacity: 1,
+    borderColor: colors.primary,
+    backgroundColor: colors.surface,
   },
   iconCircle: {
     width: 44,
@@ -232,26 +236,21 @@ const styles = StyleSheet.create({
     borderRadius: radius.xs,
     backgroundColor: colors.border,
   },
+  badgeEnabled: {
+    backgroundColor: colors.primaryLight,
+  },
   badgeText: {
     ...typography.caption,
-    fontSize: 11,
     color: colors.muted,
     fontWeight: '500',
   },
+  badgeTextEnabled: {
+    color: colors.primaryDark,
+    fontWeight: '600',
+  },
   closeButton: {
-    minHeight: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.primary,
-    borderRadius: radius.md,
     marginTop: spacing.xs,
-  },
-  closePressed: {
-    opacity: 0.88,
-  },
-  closeText: {
-    ...typography.bodyBold,
-    color: colors.surface,
+    width: '100%',
   },
 });
 
