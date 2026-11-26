@@ -71,6 +71,15 @@ database secrets, tokens, or passwords there. Local HTTP is only for this health
 check on a trusted network; future deployment must use HTTPS. Browser/Web support
 and standalone APK/IPA/native-build configuration are deliberately deferred.
 
+## Test recurring expense suggestions in Expo Go
+
+1. Connect the phone and laptop to the same Wi-Fi and open the app from the Expo QR code.
+2. Use a test account with the API configured. Record the same expense amount, category, and specific note on at least five of the last seven days, including yesterday or the day before. Use the date arrows in manual entry to record synthetic history during testing.
+3. Open **Thống kê**. The suggestion card displays the amount, note, category, date, and number of matching days. Tap **Duyệt 1 chạm** to save it, **Chỉnh sửa** to open a prefilled manual entry, or **Bỏ qua** to dismiss it and pause that habit for seven days.
+4. To test system delivery, turn on **Nhắc gợi ý thói quen** with today's suggestion visible and grant notification permission. The app schedules a generic local reminder for approximately 18:00 Vietnam time, or shortly after setup if it is already past 18:00. Tap the reminder to return to **Thống kê**. Android may delay delivery to conserve power.
+
+Leave the draft pending to test the reminder before approving or dismissing. The app schedules reminders from a live draft it has loaded. Confirming, dismissing or turning off reminders cancels the pending OS notification. Notification delivery and tap behavior require a physical device check.
+
 ## Run in the iOS Simulator on this Mac
 
 ### Manual prerequisites

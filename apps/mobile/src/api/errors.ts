@@ -75,6 +75,7 @@ const VIETNAMESE_CODE_MESSAGES: Record<string, string> = {
   NOT_FOUND: 'Không tìm thấy dữ liệu yêu cầu.',
   BAD_REQUEST: 'Yêu cầu không hợp lệ.',
   CONFLICT: 'Dữ liệu xung đột với trạng thái hiện tại.',
+  HABIT_STALE: 'Gợi ý này đã hết hạn hoặc khoản chi đã được ghi.',
   VALIDATION_ERROR: 'Dữ liệu nhập chưa hợp lệ, vui lòng kiểm tra lại.',
   RATE_LIMITED: 'Bạn thao tác quá nhanh, vui lòng thử lại sau ít phút.',
   INTERNAL_ERROR: 'Máy chủ đang gặp sự cố, vui lòng thử lại sau.',

@@ -20,6 +20,7 @@ from app.budget import (
     calculate_goal_projection,
     calculate_safe_to_spend,
 )
+from app.habits import DISMISSAL_DAYS, HISTORY_DAYS, HabitKey, HabitSuggestion, detect_habit
 from app.schemas import (
     BudgetSummaryResponse,
     GoalCreate,
@@ -69,6 +70,9 @@ class _OwnerLedger:
     opening_balance: int = 0
     unpaid_commitments: int = 0
     savings_reserved: int = 0
+    habit_dismissed_until: dict[HabitKey, dt.date] = field(default_factory=dict)
+    habit_confirmations: dict[str, str] = field(default_factory=dict)
+    habit_handled_on: dt.date | None = None
 
 
 def _require_owner_id(user_id: str) -> str:
@@ -125,41 +129,32 @@ class InMemoryRepository:
     def create_transaction(self, user_id: str, data: TransactionCreate) -> TransactionResponse:
         owner_id = _require_owner_id(user_id)
         with self._lock:
-            ledger = self._get_or_create_ledger(owner_id)
-            # Check per-owner idempotency (matches SQL unique (owner_id, idempotency_key))
-            if data.idempotency_key in ledger.idempotency_map:
-                existing_id = ledger.idempotency_map[data.idempotency_key]
-                record = dict(ledger.transactions[existing_id])
-                # Plan §9: A retry with mismatched payload must return a conflict
-                if (
-                    record["amount"] != data.amount
-                    or record["kind"] != data.kind
-                    or record["category"] != data.category
-                    or record["date"] != data.date
-                    or record["note"] != data.note
-                ):
-                    raise IdempotencyConflictError(
-                        "Idempotency key conflict: payload does not match the original transaction"
-                    )
-                return TransactionResponse(**record)
+            return self._create_transaction_locked(self._get_or_create_ledger(owner_id), data)
 
-            tx_id = str(uuid.uuid4())
-            now = dt.datetime.now(dt.timezone.utc)
-            record = {
-                "id": tx_id,
-                "amount": data.amount,
-                "kind": data.kind,
-                "category": data.category,
-                "date": data.date,
-                "note": data.note,
-                "idempotency_key": data.idempotency_key,
-                "created_at": now,
-            }
-            ledger.transactions[tx_id] = record
-            ledger.idempotency_map[data.idempotency_key] = tx_id
-            snapshot = dict(record)
+    def _create_transaction_locked(self, ledger: _OwnerLedger, data: TransactionCreate) -> TransactionResponse:
+        existing_id = ledger.idempotency_map.get(data.idempotency_key)
+        if existing_id is not None:
+            record = ledger.transactions[existing_id]
+            if any(record[field] != getattr(data, field) for field in ("amount", "kind", "category", "date", "note")):
+                raise IdempotencyConflictError(
+                    "Idempotency key conflict: payload does not match the original transaction"
+                )
+            return TransactionResponse(**record)
 
-        return TransactionResponse(**snapshot)
+        tx_id = str(uuid.uuid4())
+        record = {
+            "id": tx_id,
+            "amount": data.amount,
+            "kind": data.kind,
+            "category": data.category,
+            "date": data.date,
+            "note": data.note,
+            "idempotency_key": data.idempotency_key,
+            "created_at": dt.datetime.now(dt.timezone.utc),
+        }
+        ledger.transactions[tx_id] = record
+        ledger.idempotency_map[data.idempotency_key] = tx_id
+        return TransactionResponse(**record)
 
     def list_transactions(
         self,
@@ -197,6 +192,77 @@ class InMemoryRepository:
         if snapshot:
             return TransactionResponse(**snapshot)
         return None
+
+    # --- Recurring expenses ---
+
+    def _habit_locked(
+        self, ledger: _OwnerLedger, owner_id: str, today: dt.date,
+    ) -> tuple[HabitSuggestion, HabitKey] | None:
+        if ledger.habit_handled_on == today:
+            return None
+        first_day = today - dt.timedelta(days=HISTORY_DAYS)
+        expenses = (
+            TransactionResponse(**record)
+            for record in ledger.transactions.values()
+            if record["kind"] == "expense" and first_day <= record["date"] <= today
+        )
+        return detect_habit(
+            expenses, owner_id=owner_id, today=today, dismissed_until=ledger.habit_dismissed_until,
+        )
+
+    def get_habit_suggestion(self, user_id: str, today: dt.date | None = None) -> HabitSuggestion | None:
+        owner_id = _require_owner_id(user_id)
+        with self._lock:
+            ledger = self._ledgers.get(owner_id)
+            match = self._habit_locked(ledger, owner_id, today or get_current_date()) if ledger else None
+            return match[0] if match else None
+
+    def confirm_habit(
+        self, user_id: str, suggestion_id: str, today: dt.date | None = None,
+    ) -> TransactionResponse | None:
+        owner_id = _require_owner_id(user_id)
+        with self._lock:
+            ledger = self._ledgers.get(owner_id)
+            if ledger is None:
+                return None
+            existing_id = ledger.habit_confirmations.get(suggestion_id)
+            if existing_id is not None:
+                return TransactionResponse(**ledger.transactions[existing_id])
+
+            current_date = today or get_current_date()
+            match = self._habit_locked(ledger, owner_id, current_date)
+            if not match or match[0].id != suggestion_id:
+                return None
+            suggestion, _ = match
+            transaction = self._create_transaction_locked(ledger, TransactionCreate(
+                amount=suggestion.amount,
+                kind="expense",
+                category=suggestion.category,
+                date=suggestion.date,
+                note=suggestion.note,
+                idempotency_key=f"habit-{suggestion.id}",
+            ))
+            ledger.habit_confirmations[suggestion_id] = transaction.id
+            ledger.habit_handled_on = current_date
+            return transaction
+
+    def dismiss_habit(self, user_id: str, suggestion_id: str, today: dt.date | None = None) -> bool:
+        owner_id = _require_owner_id(user_id)
+        with self._lock:
+            ledger = self._ledgers.get(owner_id)
+            if ledger is None:
+                return False
+            current_date = today or get_current_date()
+            match = self._habit_locked(ledger, owner_id, current_date)
+            if not match or match[0].id != suggestion_id:
+                return False
+            _, key = match
+            ledger.habit_dismissed_until = {
+                habit: until for habit, until in ledger.habit_dismissed_until.items() if until > current_date
+            }
+            ledger.habit_dismissed_until[key] = current_date + dt.timedelta(days=DISMISSAL_DAYS)
+            ledger.habit_handled_on = current_date
+            return True
 
     # --- Goals ---
 

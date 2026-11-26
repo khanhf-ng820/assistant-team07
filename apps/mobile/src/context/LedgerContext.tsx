@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import type { TransactionResponse } from '../api/contracts';
 import {
   buildDailyExpenseSummary,
   DAILY_BUDGET_LIMIT,
@@ -11,7 +12,11 @@ import {
   DailyExpenseSummary,
   MonthlyBudgetSummary,
   Transaction,
+  CATEGORIES,
+  CategoryId,
 } from '../types/transaction';
+
+const fixtureExpenses = INITIAL_TRANSACTIONS.reduce((sum, tx) => sum + tx.amount, 0);
 
 interface LedgerDataContextType {
   availableBalance: number;
@@ -24,6 +29,7 @@ interface LedgerDataContextType {
   setActiveYearMonth: (year: number, month: number) => void;
   transactions: Transaction[];
   addTransaction: (tx: Omit<Transaction, 'id' | 'createdAt'>) => void;
+  addConfirmedExpense: (tx: TransactionResponse) => void;
   monthlySummary: MonthlyBudgetSummary;
   dailySummaries: Record<string, DailyExpenseSummary>;
   getSummaryForDate: (date: string) => DailyExpenseSummary;
@@ -36,9 +42,12 @@ interface LedgerUIContextType {
   openDaySheet: (date?: string) => void;
   closeDaySheet: () => void;
   isManualEntryOpen: boolean;
-  openManualEntry: () => void;
+  manualEntryDraft: ManualEntryDraft | null;
+  openManualEntry: (draft?: ManualEntryDraft) => void;
   closeManualEntry: () => void;
 }
+
+type ManualEntryDraft = Pick<Transaction, 'amount' | 'categoryId' | 'note' | 'date'>;
 
 export type LedgerContextType = LedgerDataContextType & LedgerUIContextType;
 
@@ -46,7 +55,6 @@ const LedgerDataContext = createContext<LedgerDataContextType | undefined>(undef
 const LedgerUIContext = createContext<LedgerUIContextType | undefined>(undefined);
 
 export function LedgerProvider({ children }: { children: React.ReactNode }) {
-  const [availableBalance, setAvailableBalance] = useState<number>(INITIAL_AVAILABLE_BALANCE);
   const [isBalanceVisible, setIsBalanceVisible] = useState<boolean>(true);
   const [selectedDate, setSelectedDate] = useState<string>('2024-07-10');
   const [activeYear, setActiveYear] = useState<number>(2024);
@@ -54,6 +62,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
   const [transactions, setTransactions] = useState<Transaction[]>(INITIAL_TRANSACTIONS);
   const [isDaySheetOpen, setIsDaySheetOpen] = useState<boolean>(false);
   const [isManualEntryOpen, setIsManualEntryOpen] = useState<boolean>(false);
+  const [manualEntryDraft, setManualEntryDraft] = useState<ManualEntryDraft | null>(null);
 
   const toggleBalanceVisibility = useCallback(() => {
     setIsBalanceVisible((prev) => !prev);
@@ -70,12 +79,14 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     setIsDaySheetOpen(false);
   }, []);
 
-  const openManualEntry = useCallback(() => {
+  const openManualEntry = useCallback((draft?: ManualEntryDraft) => {
+    setManualEntryDraft(draft ?? null);
     setIsManualEntryOpen(true);
   }, []);
 
   const closeManualEntry = useCallback(() => {
     setIsManualEntryOpen(false);
+    setManualEntryDraft(null);
   }, []);
 
   const setActiveYearMonth = useCallback((year: number, month: number) => {
@@ -92,10 +103,32 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
       };
 
       setTransactions((prev) => [newTx, ...prev]);
-      // Recorded balance may go negative when spending exceeds current funds (plan §7 line 183)
-      setAvailableBalance((prev) => prev - txData.amount);
     },
     []
+  );
+
+  const addConfirmedExpense = useCallback((tx: TransactionResponse) => {
+    if (tx.kind !== 'expense') return;
+    const categoryId = Object.hasOwn(CATEGORIES, tx.category) ? tx.category as CategoryId : 'other';
+    const time = new Intl.DateTimeFormat('en-GB', {
+      hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh',
+    }).format(new Date(tx.created_at));
+    const entry: Transaction = {
+      id: tx.id,
+      amount: tx.amount,
+      categoryId,
+      date: tx.date,
+      note: tx.note ?? CATEGORIES[categoryId].name,
+      time,
+      createdAt: tx.created_at,
+    };
+    setTransactions((prev) => prev.some((item) => item.id === tx.id) ? prev : [entry, ...prev]);
+  }, []);
+
+  // Recorded balance may go negative when spending exceeds current funds.
+  const availableBalance = useMemo(
+    () => INITIAL_AVAILABLE_BALANCE + fixtureExpenses - transactions.reduce((sum, tx) => sum + tx.amount, 0),
+    [transactions]
   );
 
   // Daily summaries dynamically generated for the active year and month
@@ -135,6 +168,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
       setActiveYearMonth,
       transactions,
       addTransaction,
+      addConfirmedExpense,
       monthlySummary,
       dailySummaries,
       getSummaryForDate,
@@ -151,6 +185,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     setActiveYearMonth,
     transactions,
     addTransaction,
+    addConfirmedExpense,
     monthlySummary,
     dailySummaries,
     getSummaryForDate,
@@ -163,6 +198,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
       openDaySheet,
       closeDaySheet,
       isManualEntryOpen,
+      manualEntryDraft,
       openManualEntry,
       closeManualEntry,
     };
@@ -171,6 +207,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     openDaySheet,
     closeDaySheet,
     isManualEntryOpen,
+      manualEntryDraft,
     openManualEntry,
     closeManualEntry,
   ]);

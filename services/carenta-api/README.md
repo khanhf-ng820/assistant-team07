@@ -18,6 +18,9 @@ Implements the 100% deterministic budget calculation engine (zero LLM math) and 
 - `GET /api/v1/auth/me` (and `/v1/auth/me`): Authenticated Student Identity probe (`app/auth.py`).
 - `GET /api/v1/transactions` (and `/v1/transactions`): List transactions with date and kind filtering.
 - `POST /api/v1/transactions`: Create a transaction (requires `idempotency_key`, returns 409 when the key is reused with a different amount, kind, category, date, or note).
+- `GET /api/v1/habits/suggestion`: Fetch today's recurring expense draft or `{"suggestion":null}`. The response is private and uncached.
+- `POST /api/v1/habits/{suggestion_id}/confirm`: Save the current draft as a transaction. Replaying a successful confirmation returns the original transaction.
+- `POST /api/v1/habits/{suggestion_id}/dismiss`: Hide the current draft and pause that habit for seven days. Confirming or dismissing a superseded draft returns `409 HABIT_STALE`.
 - `GET /api/v1/budget/summary`: Budget summary including Safe-to-Spend, daily allowance, and recovered subsequent limits.
 - `GET /api/v1/goals`: List saving goals.
 - `POST /api/v1/goal` (alias `POST /api/v1/goals`): Create the single active goal. Rejects client-supplied balances (422) and returns 409 if a goal is already active, so saved money is never dropped.
@@ -27,6 +30,12 @@ Implements the 100% deterministic budget calculation engine (zero LLM math) and 
 - `POST /api/v1/budget/config`: Set `opening_balance`, `unpaid_commitments`, `savings_reserved` (Phase 1 development helper).
 
 Interactive OpenAPI documentation is available at `http://localhost:8000/docs`.
+
+## Recurring expense evaluation (issue #58)
+
+The detector uses each student's own recorded expenses and the Asia/Ho_Chi_Minh date. A candidate needs the same normalized note, category, and amount on five distinct days out of the preceding seven, including a matching entry in the last two days. Days with more than one entry for that habit count against consistency. The score combines frequency (70%) and consistency (30%) and must reach 0.80. The score is a heuristic. The test cases in `tests/test_habits.py` exercise the threshold and suppression using synthetic histories.
+
+The endpoint offers one draft at a time and stops offering drafts for the day after confirmation or dismissal. An existing expense with the same category and normalized note suppresses that habit for today. History, confirmations and cooldowns use the service's per-student in-memory repository and reset when the service restarts.
 
 ## Run from repository root
 

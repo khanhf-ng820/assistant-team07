@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Modal,
   Pressable,
@@ -9,9 +9,12 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { isApiError } from '../../api/errors';
+import { useOptionalAuth } from '../../auth/AuthContext';
 import { useLedger } from '../../context/LedgerContext';
 import { formatVndDigits } from '../../format';
 import { colors, type } from '../../theme';
+import { todayInVietnam } from '../../savings/goal';
 import {
   CATEGORIES,
   Category,
@@ -29,10 +32,14 @@ interface ManualEntryModalProps {
 }
 
 export function ManualEntryModal({ visible, onClose }: ManualEntryModalProps) {
+  const auth = useOptionalAuth();
+  const isApiConfigured = auth?.isApiConfigured ?? false;
   const {
     isManualEntryOpen,
     closeManualEntry,
     addTransaction,
+    addConfirmedExpense,
+    manualEntryDraft,
     selectedDate,
     dailyBudgetLimit,
     getSummaryForDate,
@@ -40,23 +47,40 @@ export function ManualEntryModal({ visible, onClose }: ManualEntryModalProps) {
 
   const isModalVisible = visible !== undefined ? visible : isManualEntryOpen;
   const handleClose = onClose || closeManualEntry;
+  const defaultDate = isApiConfigured ? todayInVietnam() : selectedDate || '2024-07-10';
 
-  // Initial amount buffer matches Figma Page 8: '45000'
-  const [amountStr, setAmountStr] = useState<string>('45000');
+  // The local fixture preserves Figma's prefilled example.
+  const [amountStr, setAmountStr] = useState(isApiConfigured ? '0' : '45000');
   const [selectedCategoryId, setSelectedCategoryId] = useState<CategoryId>('food');
-  const [note, setNote] = useState<string>('Cơm trưa');
+  const [note, setNote] = useState(isApiConfigured ? '' : 'Cơm trưa');
   const [entryDate, setEntryDate] = useState<string>(selectedDate || '2024-07-10');
   const [isCategoryPickerOpen, setIsCategoryPickerOpen] = useState<boolean>(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const saving = useRef(false);
+  const editingSuggestion = useRef(false);
+  const pending = useRef<{ fingerprint: string; key: string } | null>(null);
 
   useEffect(() => {
     if (isModalVisible) {
-      setEntryDate(selectedDate || '2024-07-10');
+      setEntryDate(manualEntryDraft?.date ?? defaultDate);
       setValidationError(null);
-      setIsSaving(false);
     }
-  }, [isModalVisible, selectedDate]);
+  }, [isModalVisible, defaultDate, manualEntryDraft]);
+
+  useEffect(() => {
+    if (manualEntryDraft) {
+      editingSuggestion.current = true;
+      setAmountStr(String(manualEntryDraft.amount));
+      setSelectedCategoryId(manualEntryDraft.categoryId);
+      setNote(manualEntryDraft.note);
+    } else if (editingSuggestion.current) {
+      editingSuggestion.current = false;
+      setAmountStr('0');
+      setSelectedCategoryId('food');
+      setNote('');
+    }
+  }, [manualEntryDraft]);
 
   const selectedCategory: Category = CATEGORIES[selectedCategoryId] || CATEGORIES.food;
   const numericAmount = parseInt(amountStr || '0', 10);
@@ -93,32 +117,60 @@ export function ManualEntryModal({ visible, onClose }: ManualEntryModalProps) {
   const priorRemainingAllowance = dailyBudgetLimit - existingSpentOnDate;
   const remainingAfterExpense = priorRemainingAllowance - numericAmount;
 
-  const handleSave = () => {
-    if (isSaving) return;
+  const handleSave = async () => {
+    if (saving.current) return;
 
     if (numericAmount <= 0) {
       setValidationError('Vui lòng nhập số tiền lớn hơn 0');
       return;
     }
 
+    saving.current = true;
     setIsSaving(true);
-    const now = new Date();
-    const hours = now.getHours().toString().padStart(2, '0');
-    const minutes = now.getMinutes().toString().padStart(2, '0');
-
-    addTransaction({
-      amount: numericAmount,
-      categoryId: selectedCategoryId,
-      note: note.trim() || selectedCategory.name,
-      date: entryDate,
-      time: `${hours}:${minutes}`,
-    });
-
-    // Reset and close
-    setAmountStr('0');
-    setNote('');
-    setIsSaving(false);
-    handleClose();
+    setValidationError(null);
+    const description = note.trim() || selectedCategory.name;
+    try {
+      if (isApiConfigured && auth) {
+        const payload = {
+          kind: 'expense' as const,
+          amount: numericAmount,
+          category: selectedCategoryId,
+          note: note.trim() || null,
+          date: entryDate,
+        };
+        const fingerprint = JSON.stringify(payload);
+        if (pending.current?.fingerprint !== fingerprint) {
+          pending.current = {
+            fingerprint,
+            key: `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          };
+        }
+        const tx = await auth.apiClient.createTransaction({
+          ...payload, idempotency_key: pending.current.key,
+        });
+        addConfirmedExpense(tx);
+        pending.current = null;
+      } else {
+        const now = new Date();
+        const hours = now.getHours().toString().padStart(2, '0');
+        const minutes = now.getMinutes().toString().padStart(2, '0');
+        addTransaction({
+          amount: numericAmount,
+          categoryId: selectedCategoryId,
+          note: description,
+          date: entryDate,
+          time: `${hours}:${minutes}`,
+        });
+      }
+      setAmountStr('0');
+      setNote('');
+      handleClose();
+    } catch (error) {
+      setValidationError(isApiError(error) ? error.userMessage : 'Không thể lưu khoản chi. Vui lòng thử lại.');
+    } finally {
+      saving.current = false;
+      setIsSaving(false);
+    }
   };
 
   const formattedAmountDisplay = numericAmount > 0 ? formatVndDigits(numericAmount) : '0';
@@ -128,7 +180,7 @@ export function ManualEntryModal({ visible, onClose }: ManualEntryModalProps) {
       testID="manual-entry-modal"
       visible={isModalVisible}
       animationType="slide"
-      onRequestClose={handleClose}
+      onRequestClose={() => { if (!saving.current) handleClose(); }}
     >
       <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
         {/* Top Header with >= 48dp Back Button */}
@@ -136,6 +188,7 @@ export function ManualEntryModal({ visible, onClose }: ManualEntryModalProps) {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Quay lại"
+            disabled={isSaving}
             onPress={handleClose}
             hitSlop={8}
             style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
@@ -239,6 +292,7 @@ export function ManualEntryModal({ visible, onClose }: ManualEntryModalProps) {
                   accessibilityLabel="Nhập ghi chú khoản chi"
                   value={note}
                   onChangeText={setNote}
+                  maxLength={255}
                   placeholder="Nhập tên khoản chi..."
                   placeholderTextColor={colors.subtle}
                   style={styles.noteInput}
@@ -266,7 +320,7 @@ export function ManualEntryModal({ visible, onClose }: ManualEntryModalProps) {
               <View style={styles.dateValueGroup}>
                 <Text style={styles.calendarIcon}>📅</Text>
                 <Text style={styles.dateValueText} testID="manual-entry-date-value">
-                  {entryDate === '2024-07-10'
+                  {!isApiConfigured && entryDate === '2024-07-10'
                     ? 'Hôm nay (10 tháng 7, 2024)'
                     : formatVietnameseDate(entryDate)}
                 </Text>
