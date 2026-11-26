@@ -24,11 +24,17 @@ class SupabaseSettings:
 
 
 def load_supabase_settings(environ: Mapping[str, str] | None = None) -> SupabaseSettings | None:
-    """Return Supabase settings, or ``None`` when Supabase is not configured.
+    """Return full Supabase DB/admin settings, or ``None`` when unconfigured.
 
-    A partial configuration is rejected so a missing key is noticed at start-up
-    rather than on the first database request. Error messages name variables,
-    never their values.
+    This loader is strictly for future server-side Supabase DB/admin clients that
+    require all three variables (``SUPABASE_URL``, ``SUPABASE_ANON_KEY``, and
+    ``SUPABASE_SERVICE_ROLE_KEY``). FastAPI JWT-only authentication does not
+    call this helper: ``app.auth.load_auth_config()`` verifies Bearer JWTs with
+    ``SUPABASE_URL`` (or ``SUPABASE_JWT_SECRET``) alone.
+
+    A partial configuration is rejected so a missing DB/admin key is noticed at
+    start-up rather than on the first database request. Error messages name
+    variables, never their values.
     """
     env = os.environ if environ is None else environ
     values = {name: env.get(name, "").strip() for name in _REQUIRED}
