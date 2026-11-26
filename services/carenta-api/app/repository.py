@@ -1,13 +1,15 @@
-"""In-memory data repository for CARENTA API.
+"""In-memory data repository for CARENTA API, partitioned per Student Identity.
 
 Architecture Note:
-    Phase 1 single in-memory store baseline. User authentication, RLS, and multi-tenancy
-    are mocked / single-tenant until Supabase integration in subsequent phase (Issue #42 / #46).
-    Enforces idempotency keys, deterministic queries, and calculation consistency.
+    Phase 1 per-`user_id` in-memory store mirroring #42's `owner_id` isolation
+    invariants (per-owner idempotency keys, one active goal per owner, isolated
+    budget parameters and transactions) behind a clean repository seam until live
+    Supabase Postgres persistence replaces the in-memory backend.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import datetime as dt
 import threading
 import uuid
@@ -58,52 +60,76 @@ class ActiveGoalExistsError(Exception):
     pass
 
 
+@dataclass
+class _OwnerLedger:
+    transactions: dict[str, dict] = field(default_factory=dict)
+    idempotency_map: dict[str, str] = field(default_factory=dict)  # idempotency_key -> transaction_id
+    goals: dict[str, dict] = field(default_factory=dict)
+    active_goal_id: Optional[str] = None
+    opening_balance: int = 0
+    unpaid_commitments: int = 0
+    savings_reserved: int = 0
+
+
+def _require_owner_id(user_id: str) -> str:
+    cleaned = user_id.strip() if isinstance(user_id, str) else ""
+    if not cleaned:
+        raise ValueError("user_id must be a non-empty string")
+    return cleaned
+
+
 class InMemoryRepository:
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._transactions: dict[str, dict] = {}
-        self._idempotency_map: dict[str, str] = {}  # idempotency_key -> transaction_id
-        self._goals: dict[str, dict] = {}
-        self._active_goal_id: Optional[str] = None
+        self._ledgers: dict[str, _OwnerLedger] = {}
 
-        # User budget configuration baseline (defaults for planning)
-        self._opening_balance: int = 0
-        self._unpaid_commitments: int = 0
-        self._savings_reserved: int = 0
+    def _get_or_create_ledger(self, owner_id: str) -> _OwnerLedger:
+        ledger = self._ledgers.get(owner_id)
+        if ledger is None:
+            ledger = _OwnerLedger()
+            self._ledgers[owner_id] = ledger
+        return ledger
+
+    def _active_goal_record(
+        self, owner_id: str
+    ) -> tuple[Optional[_OwnerLedger], Optional[dict]]:
+        ledger = self._ledgers.get(owner_id)
+        if ledger is None or not ledger.active_goal_id:
+            return ledger, None
+        return ledger, ledger.goals.get(ledger.active_goal_id)
 
     def reset(self) -> None:
         """Clear all stored data (useful for test isolation)."""
         with self._lock:
-            self._transactions.clear()
-            self._idempotency_map.clear()
-            self._goals.clear()
-            self._active_goal_id = None
-            self._opening_balance = 0
-            self._unpaid_commitments = 0
-            self._savings_reserved = 0
+            self._ledgers.clear()
 
     def configure_budget(
         self,
+        user_id: str,
         opening_balance: int | None = None,
         unpaid_commitments: int | None = None,
         savings_reserved: int | None = None,
     ) -> None:
+        owner_id = _require_owner_id(user_id)
         with self._lock:
+            ledger = self._get_or_create_ledger(owner_id)
             if opening_balance is not None:
-                self._opening_balance = opening_balance
+                ledger.opening_balance = opening_balance
             if unpaid_commitments is not None:
-                self._unpaid_commitments = unpaid_commitments
+                ledger.unpaid_commitments = unpaid_commitments
             if savings_reserved is not None:
-                self._savings_reserved = savings_reserved
+                ledger.savings_reserved = savings_reserved
 
     # --- Transactions ---
 
-    def create_transaction(self, data: TransactionCreate) -> TransactionResponse:
+    def create_transaction(self, user_id: str, data: TransactionCreate) -> TransactionResponse:
+        owner_id = _require_owner_id(user_id)
         with self._lock:
-            # Check idempotency
-            if data.idempotency_key in self._idempotency_map:
-                existing_id = self._idempotency_map[data.idempotency_key]
-                record = self._transactions[existing_id]
+            ledger = self._get_or_create_ledger(owner_id)
+            # Check per-owner idempotency (matches SQL unique (owner_id, idempotency_key))
+            if data.idempotency_key in ledger.idempotency_map:
+                existing_id = ledger.idempotency_map[data.idempotency_key]
+                record = dict(ledger.transactions[existing_id])
                 # Plan §9: A retry with mismatched payload must return a conflict
                 if (
                     record["amount"] != data.amount
@@ -129,19 +155,25 @@ class InMemoryRepository:
                 "idempotency_key": data.idempotency_key,
                 "created_at": now,
             }
-            self._transactions[tx_id] = record
-            self._idempotency_map[data.idempotency_key] = tx_id
+            ledger.transactions[tx_id] = record
+            ledger.idempotency_map[data.idempotency_key] = tx_id
+            snapshot = dict(record)
 
-            return TransactionResponse(**record)
+        return TransactionResponse(**snapshot)
 
     def list_transactions(
         self,
+        user_id: str,
         start_date: Optional[dt.date] = None,
         end_date: Optional[dt.date] = None,
         kind: Optional[str] = None,
     ) -> list[TransactionResponse]:
+        owner_id = _require_owner_id(user_id)
         with self._lock:
-            items = list(self._transactions.values())
+            ledger = self._ledgers.get(owner_id)
+            if ledger is None:
+                return []
+            items = [dict(item) for item in ledger.transactions.values()]
 
         if start_date:
             items = [item for item in items if item["date"] >= start_date]
@@ -154,24 +186,33 @@ class InMemoryRepository:
         items.sort(key=lambda x: (x["date"], x["created_at"]), reverse=True)
         return [TransactionResponse(**item) for item in items]
 
-    def get_transaction(self, tx_id: str) -> Optional[TransactionResponse]:
+    def get_transaction(self, user_id: str, tx_id: str) -> Optional[TransactionResponse]:
+        owner_id = _require_owner_id(user_id)
         with self._lock:
-            record = self._transactions.get(tx_id)
-            if record:
-                return TransactionResponse(**record)
-            return None
+            ledger = self._ledgers.get(owner_id)
+            if ledger is None:
+                return None
+            record = ledger.transactions.get(tx_id)
+            snapshot = dict(record) if record else None
+        if snapshot:
+            return TransactionResponse(**snapshot)
+        return None
 
     # --- Goals ---
 
-    def set_active_goal(self, data: GoalCreate, today: Optional[dt.date] = None) -> GoalResponse:
-        """Create the single active goal. Rejects client-supplied balance overrides.
+    def set_active_goal(
+        self, user_id: str, data: GoalCreate, today: Optional[dt.date] = None
+    ) -> GoalResponse:
+        """Create the single active goal for an owner. Rejects client-supplied balance overrides.
 
-        Raises ActiveGoalExistsError if a goal is already active, so money already
-        allocated to it can never silently become spendable. Use update_active_goal.
+        Raises ActiveGoalExistsError if this owner already has an active goal, so money
+        already allocated to it can never silently become spendable. Use update_active_goal.
         """
+        owner_id = _require_owner_id(user_id)
         current_date = today or get_current_date()
         with self._lock:
-            if self._active_goal_id and self._active_goal_id in self._goals:
+            ledger = self._get_or_create_ledger(owner_id)
+            if ledger.active_goal_id and ledger.active_goal_id in ledger.goals:
                 raise ActiveGoalExistsError(
                     "An active goal already exists; update it with PATCH /goal instead"
                 )
@@ -185,55 +226,70 @@ class InMemoryRepository:
                 "allocated_amount": 0,  # Starts strictly at 0 (reject client overrides)
                 "created_at": now,
             }
-            self._goals[goal_id] = record
-            self._active_goal_id = goal_id
+            ledger.goals[goal_id] = record
+            ledger.active_goal_id = goal_id
+            snapshot = dict(record)
 
-        return self._format_goal(record, current_date)
+        return self._format_goal(snapshot, current_date)
 
-    def update_active_goal(self, data: GoalUpdate, today: Optional[dt.date] = None) -> Optional[GoalResponse]:
-        """Update existing active goal while strictly preserving allocated savings."""
+    def update_active_goal(
+        self, user_id: str, data: GoalUpdate, today: Optional[dt.date] = None
+    ) -> Optional[GoalResponse]:
+        """Update owner's existing active goal while strictly preserving allocated savings."""
+        owner_id = _require_owner_id(user_id)
         current_date = today or get_current_date()
         with self._lock:
-            if not self._active_goal_id or self._active_goal_id not in self._goals:
+            _, record = self._active_goal_record(owner_id)
+            if record is None:
                 return None
-            record = self._goals[self._active_goal_id]
             if data.title is not None:
                 record["title"] = data.title
             if data.target_amount is not None:
                 record["target_amount"] = data.target_amount
             if data.deadline is not None:
                 record["deadline"] = data.deadline
+            snapshot = dict(record)
 
-        return self._format_goal(record, current_date)
+        return self._format_goal(snapshot, current_date)
 
-    def allocate_to_active_goal(self, amount: int, today: Optional[dt.date] = None) -> Optional[GoalResponse]:
-        """Allocate virtual savings to the active goal.
+    def allocate_to_active_goal(
+        self, user_id: str, amount: int, today: Optional[dt.date] = None
+    ) -> Optional[GoalResponse]:
+        """Allocate virtual savings to owner's active goal.
 
-        Plan §7: allocation moves value from the period's still-reserved savings into
+        Plan §7: allocation moves value from the owner's still-reserved savings into
         allocated savings. Only the part above the reserve reduces discretionary funds.
         """
+        owner_id = _require_owner_id(user_id)
         current_date = today or get_current_date()
         with self._lock:
-            if not self._active_goal_id or self._active_goal_id not in self._goals:
+            ledger, record = self._active_goal_record(owner_id)
+            if ledger is None or record is None:
                 return None
-            record = self._goals[self._active_goal_id]
             record["allocated_amount"] += amount
-            self._savings_reserved -= min(amount, self._savings_reserved)
+            ledger.savings_reserved -= min(amount, ledger.savings_reserved)
+            snapshot = dict(record)
 
-        return self._format_goal(record, current_date)
+        return self._format_goal(snapshot, current_date)
 
-    def get_active_goal(self, today: Optional[dt.date] = None) -> Optional[GoalResponse]:
+    def get_active_goal(self, user_id: str, today: Optional[dt.date] = None) -> Optional[GoalResponse]:
+        owner_id = _require_owner_id(user_id)
         current_date = today or get_current_date()
         with self._lock:
-            if not self._active_goal_id or self._active_goal_id not in self._goals:
+            _, record = self._active_goal_record(owner_id)
+            if record is None:
                 return None
-            record = self._goals[self._active_goal_id]
-        return self._format_goal(record, current_date)
+            snapshot = dict(record)
+        return self._format_goal(snapshot, current_date)
 
-    def list_goals(self, today: Optional[dt.date] = None) -> list[GoalResponse]:
+    def list_goals(self, user_id: str, today: Optional[dt.date] = None) -> list[GoalResponse]:
+        owner_id = _require_owner_id(user_id)
         current_date = today or get_current_date()
         with self._lock:
-            records = list(self._goals.values())
+            ledger = self._ledgers.get(owner_id)
+            if ledger is None:
+                return []
+            records = [dict(r) for r in ledger.goals.values()]
         return [self._format_goal(r, current_date) for r in records]
 
     def _format_goal(self, record: dict, today: dt.date) -> GoalResponse:
@@ -261,27 +317,33 @@ class InMemoryRepository:
 
     def get_budget_summary(
         self,
+        user_id: str,
         today: Optional[dt.date] = None,
         days_remaining: Optional[int] = None,
     ) -> BudgetSummaryResponse:
+        owner_id = _require_owner_id(user_id)
         current_date = today or get_current_date()
 
         with self._lock:
-            all_tx = list(self._transactions.values())
-            opening = self._opening_balance
-            commitments = self._unpaid_commitments
-            reserved = self._savings_reserved
+            ledger, active_goal = self._active_goal_record(owner_id)
+            if ledger is None:
+                all_tx: list[dict] = []
+                opening = 0
+                commitments = 0
+                reserved = 0
+                savings_allocated = 0
+            else:
+                all_tx = [dict(t) for t in ledger.transactions.values()]
+                opening = ledger.opening_balance
+                commitments = ledger.unpaid_commitments
+                reserved = ledger.savings_reserved
+                savings_allocated = active_goal["allocated_amount"] if active_goal else 0
 
             # Derive effective remaining days to month-end inclusively
             if days_remaining is not None:
                 effective_days = days_remaining
             else:
                 effective_days = calculate_days_remaining_to_month_end(current_date)
-
-            # Allocated savings from active goal if any
-            savings_allocated = 0
-            if self._active_goal_id and self._active_goal_id in self._goals:
-                savings_allocated = self._goals[self._active_goal_id]["allocated_amount"]
 
         # Derive cash
         total_income = sum(t["amount"] for t in all_tx if t["kind"] == "income")
