@@ -11,6 +11,7 @@ const config: ExpoConfig = {
   icon: './assets/icon.png',
   plugins: [
     'expo-router',
+    'expo-secure-store',
     [
       'expo-camera',
       {

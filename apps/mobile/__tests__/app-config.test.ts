@@ -12,6 +12,12 @@ it('enables iOS development, Android export, and required capture plugins', () =
     Array.isArray(entry) ? entry[0] : entry
   );
   expect(pluginNames).toEqual(
-    expect.arrayContaining(['expo-router', 'expo-camera', 'expo-image-picker', 'expo-audio'])
+    expect.arrayContaining([
+      'expo-router',
+      'expo-secure-store',
+      'expo-camera',
+      'expo-image-picker',
+      'expo-audio',
+    ])
   );
 });

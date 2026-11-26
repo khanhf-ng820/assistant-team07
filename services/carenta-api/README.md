@@ -1,7 +1,7 @@
 # CARENTA API Service
 
 Independent Python 3.12/FastAPI service for CARENTA budget planner.
-Implements the 100% deterministic budget calculation engine (zero LLM math) and Phase 1 REST endpoints (Issue #43).
+Implements the 100% deterministic budget calculation engine (zero LLM math) and Phase 1 REST endpoints (Issue #43), plus Supabase JWT verification and structured error envelopes (Issue #46).
 
 ## Features
 
@@ -9,11 +9,13 @@ Implements the 100% deterministic budget calculation engine (zero LLM math) and 
 - **Dynamic Daily Budget & Recovery (Hạn mức trong ngày & UC05):** Auto-recalculates subsequent daily limits when overspending occurs.
 - **Savings Goal Projection:** Suggests daily savings contribution rate based on remaining target and deadline.
 - **Transaction CRUD:** Supports paginated and date-filtered reads and idempotent writes (`idempotency_key`).
+- **JWT Verification & Request Correlation:** Verifies Supabase Bearer JWTs on `/api/v1/auth/me` (`app/auth.py`), supports explicit opt-in Local Dev Mode when Supabase env vars are unset, and attaches `X-Request-ID` + structured `{ "error": { "code", "message", "request_id" } }` error responses (`app/errors.py`).
 - **Dual Routing:** Endpoints are accessible via both `/api/v1` and `/v1`.
 
 ## Endpoints
 
-- `GET /health`: Service health check.
+- `GET /health`: Public service health check (`{"status":"ok","service":"carenta-api"}`).
+- `GET /api/v1/auth/me` (and `/v1/auth/me`): Authenticated Student Identity probe (`app/auth.py`).
 - `GET /api/v1/transactions` (and `/v1/transactions`): List transactions with date and kind filtering.
 - `POST /api/v1/transactions`: Create a transaction (requires `idempotency_key`, returns 409 when the key is reused with a different amount, kind, category, date, or note).
 - `GET /api/v1/budget/summary`: Budget summary including Safe-to-Spend, daily allowance, and recovered subsequent limits.
@@ -30,13 +32,12 @@ Interactive OpenAPI documentation is available at `http://localhost:8000/docs`.
 
 ```sh
 uv sync --project services/carenta-api --locked --python 3.12
-uv run --project services/carenta-api uvicorn app.main:app --app-dir services/carenta-api --host 0.0.0.0 --port 8000
+uv run --project services/carenta-api --env-file services/carenta-api/.env uvicorn app.main:app --app-dir services/carenta-api --host 0.0.0.0 --port 8000
 ```
-Phase 1 storage is a single global in-memory store with no authentication
-(single tenant; data is lost on restart). Supabase persistence and auth come later.
-There is no Gemini integration or media upload yet. `days_remaining` is derived from
-`today` in Asia/Ho_Chi_Minh (inclusive to month-end); use the `days_remaining` query
-parameter on `/budget/summary` to override it per request.
+
+Phase 1 financial routes enforce `get_current_identity` and isolate state per `Student Identity` (`user_id`) inside `InMemoryRepository` (mirroring `#42`'s `owner_id` invariants); live Supabase Postgres persistence is tracked separately. There is no Gemini integration or media upload yet. `days_remaining` is derived from `today` in Asia/Ho_Chi_Minh (inclusive to month-end); use the `days_remaining` query parameter on `/budget/summary` to override it per request.
+
+For unauthenticated LAN testing without Supabase env vars configured, set `CARENTA_LOCAL_DEV_AUTH=true` in `.env` (automatically ignored whenever `SUPABASE_URL` or `SUPABASE_JWT_SECRET` is set).
 
 ## Database schema and secrets (issue #42)
 
@@ -54,7 +55,13 @@ uv run --env-file services/carenta-api/.env --project services/carenta-api uvico
 ```
 
 `.env` is ignored by Git. `app/settings.py` wraps the keys in `SecretStr` so
-they do not appear in logs or `repr`. The service-role key bypasses RLS: never
+they do not appear in logs or `repr`. `load_supabase_settings()` intentionally
+requires all three DB/admin variables (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, and
+`SUPABASE_SERVICE_ROLE_KEY`), whereas JWT-only API authentication uses
+`app/auth.py` (`load_auth_config()`) and starts cleanly with `SUPABASE_URL`
+(or `SUPABASE_JWT_SECRET`) alone; in secret-only mode (without
+`SUPABASE_URL`), issuer (`iss`) validation is skipped because the expected
+issuer is derived from `SUPABASE_URL`. The service-role key bypasses RLS: never
 copy it into `apps/mobile` or an `EXPO_PUBLIC_*` variable; a test checks that the
 mobile sources do not reference it.
 
@@ -83,6 +90,17 @@ Or from `services/carenta-api`:
 cd services/carenta-api
 uv run pytest
 ```
+
+The explicit configuration isolates these tests from the legacy root suite.
+They exercise the real ASGI application through HTTPX, without a listening server
+or external services. Verified on 2026-11-05 (placeholder baseline), 2026-11-21
+(JWT auth + structured error envelope + `GET /api/v1/auth/me`), and alongside
+merged #42/#43/#70 changes.
+
+The existing root tests are separately blocked by `ModuleNotFoundError: assistant`
+in `tests/test_eval.py` and `tests/test_smoke.py`. This template does not fix that
+package mismatch; passing API tests are not a passing repository baseline.
+
 ## AI assistance and review
 
 2026-11-04: OpenCode / GPT-6.1 Sol Pro generated this isolated template,
