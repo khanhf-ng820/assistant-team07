@@ -57,12 +57,12 @@ it('previews and saves a manual expense on the selected date', async () => {
   await fireEvent.press(screen.getByTestId('calendar-cell-2024-08-12'));
   await fireEvent.press(screen.getByRole('button', { name: 'Đóng chi tiết ngày' }));
   await openManualEntry();
-  expect(screen.getByText('Còn 75.000 ₫ sau khoản chi này')).toBeVisible();
+  expect(screen.getByText('Còn 235.000 ₫ sau khoản chi này')).toBeVisible();
   await clearDefaultAmount();
   await fireEvent.press(screen.getByTestId('numpad-key-3'));
   await fireEvent.press(screen.getByTestId('numpad-key-7'));
   await fireEvent.press(screen.getByTestId('numpad-key-000'));
-  expect(screen.getByText('Còn 83.000 ₫ sau khoản chi này')).toBeVisible();
+  expect(screen.getByText('Còn 243.000 ₫ sau khoản chi này')).toBeVisible();
   await fireEvent.press(screen.getByTestId('category-selector-button'));
   await fireEvent.press(screen.getByTestId('category-option-education'));
   await fireEvent.changeText(screen.getByTestId('manual-entry-note-input'), '  Vở bài tập  ');

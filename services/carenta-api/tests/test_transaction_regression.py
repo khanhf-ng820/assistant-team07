@@ -1,17 +1,23 @@
 """Cover transaction read and validation behavior through the FastAPI routes."""
 
+from functools import partial
+
 import pytest
 
-from app.repository import repository
+from app.auth import AuthConfig
+from app.main import create_app
+from app.repository import InMemoryRepository
 
 TRANSACTIONS = "/v1/transactions"
 
 
-@pytest.fixture(autouse=True)
-def clean_repository():
-    repository.reset()
-    yield
-    repository.reset()
+@pytest.fixture
+def financial_api(request_api):
+    application = create_app(
+        auth_config=AuthConfig(local_dev_auth=True),
+        repository=InMemoryRepository(),
+    )
+    return partial(request_api, application=application)
 
 
 def transaction_payload(**overrides):
@@ -26,21 +32,21 @@ def transaction_payload(**overrides):
     }
 
 
-def test_get_transaction_returns_saved_record(request_api):
+def test_get_transaction_returns_saved_record(financial_api):
     payload = transaction_payload()
-    created = request_api("POST", TRANSACTIONS, json=payload)
+    created = financial_api("POST", TRANSACTIONS, json=payload)
     assert created.status_code == 201, created.text
     transaction = created.json()
 
-    retrieved = request_api("GET", f"{TRANSACTIONS}/{transaction['id']}")
+    retrieved = financial_api("GET", f"{TRANSACTIONS}/{transaction['id']}")
 
     assert retrieved.status_code == 200
     assert retrieved.json() == transaction
     assert {field: retrieved.json()[field] for field in payload} == payload
-    assert request_api("GET", f"{TRANSACTIONS}/missing-id").status_code == 404
+    assert financial_api("GET", f"{TRANSACTIONS}/missing-id").status_code == 404
 
 
-def test_filters_apply_to_records_and_totals(request_api):
+def test_filters_apply_to_records_and_totals(financial_api):
     older_expense = transaction_payload(
         amount=12_000, category="transport", date="2026-11-19", idempotency_key="bus",
     )
@@ -49,9 +55,9 @@ def test_filters_apply_to_records_and_totals(request_api):
     later_expense = transaction_payload(amount=70_000, date="2026-11-21", idempotency_key="books")
     after_window = transaction_payload(amount=9_000, date="2026-11-22", idempotency_key="snack")
     for payload in (older_expense, lunch, income, later_expense, after_window):
-        assert request_api("POST", TRANSACTIONS, json=payload).status_code == 201
+        assert financial_api("POST", TRANSACTIONS, json=payload).status_code == 201
 
-    response = request_api(
+    response = financial_api(
         "GET", TRANSACTIONS,
         params={"start_date": "2026-11-20", "end_date": "2026-11-21", "kind": "expense"},
     )
@@ -63,49 +69,49 @@ def test_filters_apply_to_records_and_totals(request_api):
     assert result["total_expense"] == 105_000
     assert result["total_income"] == 0
 
-    all_transactions = request_api("GET", TRANSACTIONS)
+    all_transactions = financial_api("GET", TRANSACTIONS)
     assert all_transactions.status_code == 200
     assert all_transactions.json()["total_income"] == 500_000
     assert all_transactions.json()["total_expense"] == 126_000
 
 
-def test_replaying_a_create_returns_the_same_record(request_api):
+def test_replaying_a_create_returns_the_same_record(financial_api):
     payload = transaction_payload()
-    created = request_api("POST", TRANSACTIONS, json=payload)
+    created = financial_api("POST", TRANSACTIONS, json=payload)
     assert created.status_code == 201, created.text
 
-    replayed = request_api("POST", TRANSACTIONS, json=payload)
+    replayed = financial_api("POST", TRANSACTIONS, json=payload)
     assert replayed.status_code == 201, replayed.text
     assert replayed.json() == created.json()
 
-    ledger = request_api("GET", TRANSACTIONS)
+    ledger = financial_api("GET", TRANSACTIONS)
     assert ledger.status_code == 200
     assert ledger.json()["items"] == [created.json()]
     assert ledger.json()["total_expense"] == payload["amount"]
 
 
-def test_creation_requires_an_idempotency_key(request_api):
+def test_creation_requires_an_idempotency_key(financial_api):
     payload = transaction_payload()
     del payload["idempotency_key"]
 
-    rejected = request_api("POST", TRANSACTIONS, json=payload)
+    rejected = financial_api("POST", TRANSACTIONS, json=payload)
 
     assert rejected.status_code == 422
-    ledger = request_api("GET", TRANSACTIONS)
+    ledger = financial_api("GET", TRANSACTIONS)
     assert ledger.status_code == 200
     assert ledger.json()["items"] == []
 
 
 @pytest.mark.parametrize(("field", "value"), [("amount", 50_000), ("note", "Bữa tối")])
-def test_reusing_a_create_key_for_a_different_payload_returns_conflict(request_api, field, value):
+def test_reusing_a_create_key_for_a_different_payload_returns_conflict(financial_api, field, value):
     payload = transaction_payload()
-    created = request_api("POST", TRANSACTIONS, json=payload)
+    created = financial_api("POST", TRANSACTIONS, json=payload)
     assert created.status_code == 201, created.text
 
-    conflict = request_api("POST", TRANSACTIONS, json={**payload, field: value})
+    conflict = financial_api("POST", TRANSACTIONS, json={**payload, field: value})
     assert conflict.status_code == 409
 
-    ledger = request_api("GET", TRANSACTIONS)
+    ledger = financial_api("GET", TRANSACTIONS)
     assert ledger.status_code == 200
     assert ledger.json()["items"] == [created.json()]
     assert ledger.json()["total_expense"] == payload["amount"]
@@ -119,10 +125,10 @@ def test_reusing_a_create_key_for_a_different_payload_returns_conflict(request_a
     ("date", "2026-02-30"),
     ("idempotency_key", ""),
 ])
-def test_invalid_transaction_never_reaches_ledger(request_api, field, value):
-    rejected = request_api("POST", TRANSACTIONS, json=transaction_payload(**{field: value}))
+def test_invalid_transaction_never_reaches_ledger(financial_api, field, value):
+    rejected = financial_api("POST", TRANSACTIONS, json=transaction_payload(**{field: value}))
 
     assert rejected.status_code == 422
-    ledger = request_api("GET", TRANSACTIONS)
+    ledger = financial_api("GET", TRANSACTIONS)
     assert ledger.status_code == 200
     assert ledger.json()["items"] == []

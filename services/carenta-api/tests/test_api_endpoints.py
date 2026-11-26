@@ -15,8 +15,12 @@ import datetime as dt
 import pytest
 import httpx
 
-from app.main import app
+from app.auth import AuthConfig
+from app.main import create_app
 from app.repository import repository
+
+# Functional CRUD/engine tests opt into explicit Local Dev Mode while default create_app() fails closed.
+app = create_app(auth_config=AuthConfig(local_dev_auth=True))
 
 
 def client_request(method: str, path: str, json: dict | None = None, params: dict | None = None):
@@ -72,7 +76,10 @@ def test_transaction_crud_and_idempotency_conflict():
     mismatched_payload["amount"] = 99999
     conflict_res = client_request("POST", "/api/v1/transactions", json=mismatched_payload)
     assert conflict_res.status_code == 409
-    assert "conflict" in conflict_res.json()["detail"].lower()
+    conflict_body = conflict_res.json()
+    assert conflict_body["error"]["code"] == "CONFLICT"
+    assert "conflict" in conflict_body["error"]["message"].lower()
+    assert isinstance(conflict_body["error"]["request_id"], str) and conflict_body["error"]["request_id"]
 
     # Total must still be 1
     list_res = client_request("GET", "/api/v1/transactions")
