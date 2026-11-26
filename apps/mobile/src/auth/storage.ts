@@ -107,12 +107,27 @@ async function safeGetItem(key: string): Promise<string | null> {
   }
 }
 
-async function readManifestOrNull(): Promise<SessionManifest | null> {
+async function readManifestForWrite(): Promise<SessionManifest | null> {
   try {
     const raw = await SecureStore.getItemAsync(MANIFEST_KEY);
     return raw ? parseManifest(raw) : null;
-  } catch {
-    return null;
+  } catch (err) {
+    throw createStorageError('STORAGE_WRITE_FAILED', err);
+  }
+}
+
+async function sweepOrphanedGenerationBestEffort(gen: number): Promise<void> {
+  if (gen < 1) return;
+  for (let i = 0; ; i += 1) {
+    const key = chunkKey(gen, i);
+    let exists = false;
+    try {
+      exists = (await SecureStore.getItemAsync(key)) !== null;
+    } catch {
+      return;
+    }
+    if (!exists) return;
+    await safeDeleteBestEffort(key);
   }
 }
 
@@ -172,7 +187,7 @@ export function createSecureSessionStorage(): SessionStorage {
     },
 
     async setSession(session: AuthSession): Promise<void> {
-      const previous = await readManifestOrNull();
+      const previous = await readManifestForWrite();
       const nextGen = (previous?.gen ?? 0) + 1;
       const chunks = splitIntoUtf8Chunks(JSON.stringify(session), MAX_CHUNK_BYTES);
       const nextManifest: SessionManifest = {
@@ -201,6 +216,7 @@ export function createSecureSessionStorage(): SessionStorage {
         for (let i = 0; i < previous.chunks; i += 1) {
           await safeDeleteBestEffort(chunkKey(previous.gen, i));
         }
+        await sweepOrphanedGenerationBestEffort(previous.gen - 1);
       }
       await safeDeleteBestEffort(LEGACY_SESSION_KEY);
     },

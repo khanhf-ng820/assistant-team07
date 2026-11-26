@@ -209,4 +209,45 @@ describe('createSecureSessionStorage (iOS 2048-byte safe chunking)', () => {
     await storage.clearSession();
     expect(store.size).toBe(0);
   });
+
+  it('throws STORAGE_WRITE_FAILED without overwriting live generation when manifest read fails during setSession', async () => {
+    const store = makeBackingStore();
+    const storage = createSecureSessionStorage();
+    const nextSession: AuthSession = { ...sampleSession, accessToken: 'access-2' };
+
+    await storage.setSession(sampleSession);
+    expect(JSON.parse(store.get(MANIFEST_KEY)!)).toEqual({ v: 2, gen: 1, chunks: 1 });
+
+    // Simulate manifest read throwing once before any write happens
+    (SecureStore.getItemAsync as jest.Mock).mockRejectedValueOnce(new Error('Keychain read locked'));
+
+    await expect(storage.setSession(nextSession)).rejects.toMatchObject({
+      name: 'ApiError',
+      code: 'STORAGE_WRITE_FAILED',
+      retryable: true,
+    });
+
+    // Existing gen-1 session remains intact and restorable
+    await expect(storage.getSession()).resolves.toEqual(sampleSession);
+  });
+
+  it('sweeps orphaned gen - 1 chunks left behind by an interrupted prior sweep', async () => {
+    const store = makeBackingStore({
+      [MANIFEST_KEY]: JSON.stringify({ v: 2, gen: 2, chunks: 1 }),
+      [chunkKey(2, 0)]: JSON.stringify(sampleSession),
+      [chunkKey(1, 0)]: 'orphaned-chunk-0',
+      [chunkKey(1, 1)]: 'orphaned-chunk-1',
+    });
+    const storage = createSecureSessionStorage();
+    const nextSession: AuthSession = { ...sampleSession, accessToken: 'access-3' };
+
+    await storage.setSession(nextSession);
+
+    expect(JSON.parse(store.get(MANIFEST_KEY)!)).toEqual({ v: 2, gen: 3, chunks: 1 });
+    expect(store.has(chunkKey(1, 0))).toBe(false);
+    expect(store.has(chunkKey(1, 1))).toBe(false);
+    expect(store.has(chunkKey(2, 0))).toBe(false);
+    expect(store.has(chunkKey(3, 0))).toBe(true);
+    await expect(storage.getSession()).resolves.toEqual(nextSession);
+  });
 });
