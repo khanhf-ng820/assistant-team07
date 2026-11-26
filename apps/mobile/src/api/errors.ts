@@ -20,7 +20,10 @@ export type ApiErrorCode =
   | 'HTTP_ERROR'
   | 'STORAGE_READ_FAILED'
   | 'STORAGE_WRITE_FAILED'
-  | 'STORAGE_CLEAR_FAILED';
+  | 'STORAGE_CLEAR_FAILED'
+  | 'LARGE_AMOUNT_CONFIRMATION_REQUIRED'
+  | 'TRANSACTION_DATE_IN_FUTURE'
+  | 'LEDGER_LIMIT_EXCEEDED';
 
 export interface ApiErrorOptions {
   code: ApiErrorCode | (string & {});
@@ -82,6 +85,10 @@ const VIETNAMESE_CODE_MESSAGES: Record<string, string> = {
   STORAGE_READ_FAILED: 'Không thể đọc phiên đăng nhập từ bộ nhớ bảo mật. Vui lòng thử lại.',
   STORAGE_WRITE_FAILED: 'Không thể lưu phiên đăng nhập vào bộ nhớ bảo mật. Vui lòng thử lại.',
   STORAGE_CLEAR_FAILED: 'Không thể xóa phiên đăng nhập khỏi bộ nhớ bảo mật. Vui lòng thử đăng xuất lại.',
+  LARGE_AMOUNT_CONFIRMATION_REQUIRED:
+    'Số tiền này lớn bất thường. Vui lòng kiểm tra lại và xác nhận nếu đúng.',
+  TRANSACTION_DATE_IN_FUTURE: 'Không thể ghi giao dịch cho ngày trong tương lai.',
+  LEDGER_LIMIT_EXCEEDED: 'Số tiền vượt quá giới hạn mà ứng dụng hỗ trợ.',
 };
 
 const STORAGE_FALLBACK_MESSAGES: Record<

@@ -18,6 +18,7 @@ Implements the 100% deterministic budget calculation engine (zero LLM math) and 
 - `GET /api/v1/auth/me` (and `/v1/auth/me`): Authenticated Student Identity probe (`app/auth.py`).
 - `GET /api/v1/transactions` (and `/v1/transactions`): List transactions with date and kind filtering.
 - `POST /api/v1/transactions`: Create a transaction (requires `idempotency_key`, returns 409 when the key is reused with a different amount, kind, category, date, or note).
+  Amounts are bounded and future dates are rejected; abnormally large entries need `confirm_large_amount: true` (see *Financial input validation* below).
 - `GET /api/v1/budget/summary`: Budget summary including Safe-to-Spend, daily allowance, and recovered subsequent limits.
 - `GET /api/v1/goals`: List saving goals.
 - `POST /api/v1/goal` (alias `POST /api/v1/goals`): Create the single active goal. Rejects client-supplied balances (422) and returns 409 if a goal is already active, so saved money is never dropped.
@@ -38,6 +39,25 @@ uv run --project services/carenta-api --env-file services/carenta-api/.env uvico
 Phase 1 financial routes enforce `get_current_identity` and isolate state per `Student Identity` (`user_id`) inside `InMemoryRepository` (mirroring `#42`'s `owner_id` invariants); live Supabase Postgres persistence is tracked separately. There is no Gemini integration or media upload yet. `days_remaining` is derived from `today` in Asia/Ho_Chi_Minh (inclusive to month-end); use the `days_remaining` query parameter on `/budget/summary` to override it per request.
 
 For unauthenticated LAN testing without Supabase env vars configured, set `CARENTA_LOCAL_DEV_AUTH=true` in `.env` (automatically ignored whenever `SUPABASE_URL` or `SUPABASE_JWT_SECRET` is set).
+
+## Financial input validation (issue #56, MU01)
+
+`app/validation.py` keeps accidental or hostile input from distorting a budget.
+Every rejection uses the standard error envelope, so the mobile app can react
+to a stable `error.code`.
+
+| Rule | Applies to | Response |
+|---|---|---|
+| JSON integer between 1 and 1,000,000,000,000 ₫ (the #42 database bound). Strings, booleans, floats, zero and negatives are refused, not coerced | transaction `amount`, goal `target_amount`, `/goal/allocate` `amount` (config fields allow 0) | 422 `VALIDATION_ERROR` |
+| Not dated after today (Asia/Ho_Chi_Minh). Backdating is still allowed | new transactions | 422 `TRANSACTION_DATE_IN_FUTURE` |
+| Running income/expense totals stay ≤ 10^15 ₫, safely inside the JavaScript integer range the mobile app parses | new transactions, per student | 422 `LEDGER_LIMIT_EXCEEDED` |
+| MU01: expense ≥ 5,000,000 ₫ or income ≥ 50,000,000 ₫ is recorded only when resent with `confirm_large_amount: true` after the user confirms | new transactions | 422 `LARGE_AMOUNT_CONFIRMATION_REQUIRED` |
+
+Checks run after the idempotency lookup, so a network retry of an entry that
+was already recorded still returns the original transaction. Ordinary
+overspending below the threshold is still recorded, even if cash goes
+negative (plan §7). The mobile client maps the new codes to Vietnamese
+messages in `apps/mobile/src/api/errors.ts`.
 
 ## Database schema and secrets (issue #42)
 
