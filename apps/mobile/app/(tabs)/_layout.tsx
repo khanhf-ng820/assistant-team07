@@ -1,10 +1,12 @@
 import { Tabs, type BottomTabBarProps } from 'expo-router/js-tabs';
+import { useRouter } from 'expo-router';
 import { Fragment, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { CaptureChooser } from '../../src/components/CaptureChooser';
 import { colors, type } from '../../src/theme';
 
 function TemplateTabBar({ state, descriptors, emitter, navigateToTab, insets }: BottomTabBarProps) {
+  const router = useRouter();
   const [captureOpen, setCaptureOpen] = useState(false);
 
   return (
@@ -41,7 +43,11 @@ function TemplateTabBar({ state, descriptors, emitter, navigateToTab, insets }: 
           );
         })}
       </View>
-      <CaptureChooser visible={captureOpen} onClose={() => setCaptureOpen(false)} />
+      <CaptureChooser
+        visible={captureOpen}
+        onClose={() => setCaptureOpen(false)}
+        onReceiptSelect={() => router.push('/capture/ocr')}
+      />
     </>
   );
 }

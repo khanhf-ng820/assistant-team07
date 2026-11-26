@@ -8,8 +8,7 @@ budget application or a pixel-perfect implementation of its exported designs.
 ## What works
 
 - Two tabs: **Thống kê** and **Tiết kiệm**.
-- Shared plus button and dismissible capture chooser. Manual, receipt, and voice
-  options are disabled and explicitly labeled **Chưa triển khai**.
+- Shared plus button and dismissible capture chooser with manual entry and receipt OCR.
 - On-demand API connection check on Thống kê (`ApiHealthCheck`), deep headless
   runtime (`src/runtime/carentaRuntime.ts`) with private epoch-scoped
   read-only Offline Fallback cache, unified HTTP transport and contracts
@@ -19,9 +18,16 @@ budget application or a pixel-perfect implementation of its exported designs.
   Mode when Supabase public env vars are unset.
 - Initial teal/coral colors, native system font, safe areas and scrollable content.
 
-Financial ledger/savings UI screens, Gemini capture, database queries, and
-notifications remain tracked in sibling issues. No server-side secrets belong in
-`apps/mobile`.
+## Receipt OCR (issue #48)
+
+In Expo Go, open **+ → Quét hóa đơn**, then open the camera or pick one JPEG or
+PNG (up to 5 MB). Check the preview and tap **Đọc ảnh bằng AI** to send the
+image to Gemini via the CARENTA API. Check the amount, category and date in the
+returned draft. The results screen only displays the draft, and the common
+confirmation flow is tracked in #50.
+
+Set `GEMINI_API_KEY` in the [backend environment](../../services/carenta-api/README.md#receipt-ocr-issue-48).
+The mobile app uses `EXPO_PUBLIC_API_URL` and the existing authentication setup.
 
 ## Requirements
 

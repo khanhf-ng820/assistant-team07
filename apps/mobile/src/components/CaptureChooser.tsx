@@ -8,9 +8,10 @@ interface CaptureChooserProps {
   visible: boolean;
   onClose: () => void;
   onManualSelect?: () => void;
+  onReceiptSelect?: () => void;
 }
 
-export function CaptureChooser({ visible, onClose, onManualSelect }: CaptureChooserProps) {
+export function CaptureChooser({ visible, onClose, onManualSelect, onReceiptSelect }: CaptureChooserProps) {
   let openManualEntryFromContext: (() => void) | undefined;
   try {
     // Safe lookup if rendered within LedgerProvider
@@ -67,16 +68,22 @@ export function CaptureChooser({ visible, onClose, onManualSelect }: CaptureChoo
             {/* OCR Option (Phase 2) */}
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Quét hóa đơn — Chưa triển khai"
-              accessibilityState={{ disabled: true }}
-              disabled
-              style={[styles.option, styles.optionDisabled]}
+              accessibilityLabel={onReceiptSelect ? 'Quét hóa đơn' : 'Quét hóa đơn — Chưa triển khai'}
+              accessibilityState={{ disabled: !onReceiptSelect }}
+              disabled={!onReceiptSelect}
+              onPress={() => {
+                onClose();
+                onReceiptSelect?.();
+              }}
+              style={[styles.option, onReceiptSelect ? styles.optionActive : styles.optionDisabled]}
             >
               <View style={styles.optionHeader}>
                 <Text style={styles.optionIcon}>📷</Text>
-                <Text style={styles.methodDisabled}>Quét hóa đơn</Text>
+                <Text style={onReceiptSelect ? styles.method : styles.methodDisabled}>Quét hóa đơn</Text>
               </View>
-              <Text style={styles.subtextDisabled}>Chưa triển khai (Phase 2)</Text>
+              <Text style={onReceiptSelect ? styles.subtext : styles.subtextDisabled}>
+                {onReceiptSelect ? 'Chụp hóa đơn hoặc chọn ảnh chuyển khoản' : 'Chưa triển khai (Phase 2)'}
+              </Text>
             </Pressable>
 
             {/* Voice Option (Phase 2) */}

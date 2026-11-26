@@ -25,6 +25,7 @@ Implements the 100% deterministic budget calculation engine (zero LLM math) and 
 - `PATCH /api/v1/goal`: Update goal parameters while preserving allocated savings.
 - `POST /api/v1/goal/allocate`: Allocate virtual savings into goal. Moves value out of `savings_reserved` first (plan §7); only the part above the reserve lowers Safe-to-Spend.
 - `POST /api/v1/budget/config`: Set `opening_balance`, `unpaid_commitments`, `savings_reserved` (Phase 1 development helper).
+- `POST /api/v1/capture/ocr` (also `/v1/captures/receipt`): Extract a draft from a receipt or a Vietnamese bank-transfer screenshot.
 
 Interactive OpenAPI documentation is available at `http://localhost:8000/docs`.
 
@@ -35,9 +36,22 @@ uv sync --project services/carenta-api --locked --python 3.12
 uv run --project services/carenta-api --env-file services/carenta-api/.env uvicorn app.main:app --app-dir services/carenta-api --host 0.0.0.0 --port 8000
 ```
 
-Phase 1 financial routes enforce `get_current_identity` and isolate state per `Student Identity` (`user_id`) inside `InMemoryRepository` (mirroring `#42`'s `owner_id` invariants); live Supabase Postgres persistence is tracked separately. There is no Gemini integration or media upload yet. `days_remaining` is derived from `today` in Asia/Ho_Chi_Minh (inclusive to month-end); use the `days_remaining` query parameter on `/budget/summary` to override it per request.
+Phase 1 financial routes enforce `get_current_identity` and isolate state per `Student Identity` (`user_id`) inside `InMemoryRepository` (mirroring `#42`'s `owner_id` invariants); live Supabase Postgres persistence is tracked separately. `days_remaining` is derived from `today` in Asia/Ho_Chi_Minh (inclusive to month-end); use the `days_remaining` query parameter on `/budget/summary` to override it per request.
 
 For unauthenticated LAN testing without Supabase env vars configured, set `CARENTA_LOCAL_DEV_AUTH=true` in `.env` (automatically ignored whenever `SUPABASE_URL` or `SUPABASE_JWT_SECRET` is set).
+
+## Receipt OCR (issue #48)
+
+Set `GEMINI_API_KEY` in the ignored backend `.env` before starting Uvicorn.
+`GEMINI_RECEIPT_MODEL` defaults to `gemini-3.5-flash-lite`. Use a signed-in
+session or explicit LAN Local Dev Mode to call the endpoint.
+
+The JSON request contains a single `image_base64` string for a JPEG or PNG of
+up to 5 MB. FastAPI checks the content and dimensions, removes image metadata,
+then sends an inline image to Gemini with a 20-second deadline. The response
+contains a draft with integer VND amount, description, category, date or
+timestamp, and extraction estimates. Fields without clear evidence are `null`.
+The OCR request does not create a ledger transaction or store the image.
 
 ## Database schema and secrets (issue #42)
 
