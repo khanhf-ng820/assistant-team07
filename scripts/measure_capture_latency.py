@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import math
 import statistics
 import sys
 import time
@@ -33,7 +34,7 @@ def summarize(samples: list[float], limit: float = LIMIT_SECONDS) -> dict:
     if not samples:
         raise ValueError("no samples to summarize")
     ordered = sorted(samples)
-    p95_index = max(0, min(len(ordered) - 1, round(0.95 * len(ordered)) - 1))
+    p95_index = max(0, min(len(ordered) - 1, math.ceil(0.95 * len(ordered)) - 1))
     return {
         "runs": len(ordered),
         "min": ordered[0],

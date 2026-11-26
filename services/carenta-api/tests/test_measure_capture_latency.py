@@ -36,6 +36,16 @@ def test_summarize_single_sample_and_empty_input():
         latency.summarize([])
 
 
+def test_summarize_30_samples_uses_ceil_for_p95():
+    # 0.95 * 30 = 28.5 -> ceil = 29 -> 0-based index 28 (value 29), never understated via round()
+    samples = [float(i) for i in range(1, 31)]
+    result = latency.summarize(samples)
+    assert result["runs"] == 30
+    assert result["p95"] == 29.0
+    assert result["max"] == 30.0
+    assert result["passed"] is False
+
+
 def test_main_rejects_non_positive_runs():
     with pytest.raises(SystemExit):
         latency.main(["--runs", "0"])

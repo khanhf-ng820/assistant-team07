@@ -2,7 +2,7 @@
 /// <reference types="node" />
 
 import { getConfig } from 'expo/config';
-import { CAPTURE_KINDS, captureDeepLink } from '../src/capture/routes';
+import { CAPTURE_KINDS, captureDeepLink, resolveCaptureFeature } from '../src/capture/routes';
 
 const plugin = require('../plugins/withCaptureShortcuts');
 
@@ -18,6 +18,15 @@ describe('Android capture shortcuts plugin', () => {
     expect(plugin.CAPTURE_SHORTCUTS.length).toBeLessThanOrEqual(4);
   });
 
+  it('keeps shortcut synonyms aligned with resolveCaptureFeature allowlist', () => {
+    for (const shortcut of plugin.CAPTURE_SHORTCUTS as { kind: string; synonyms: string[] }[]) {
+      expect(resolveCaptureFeature(`capture_${shortcut.kind}`)).toBe(shortcut.kind);
+      for (const synonym of shortcut.synonyms) {
+        expect(resolveCaptureFeature(synonym)).toBe(shortcut.kind);
+      }
+    }
+  });
+
   it.each(CAPTURE_KINDS)('generates a VIEW intent and App Actions binding for %s', (kind) => {
     const xml: string = plugin.buildShortcutsXml(PKG);
 
@@ -31,13 +40,15 @@ describe('Android capture shortcuts plugin', () => {
     expect(xml).toContain(`@array/carenta_shortcut_${kind}_synonyms`);
   });
 
-  it('emits well-formed XML with App Actions OPEN_APP_FEATURE capability and shortcuts', () => {
+  it('emits well-formed XML with App Actions OPEN_APP_FEATURE capability, url-template mapping, and shortcuts', () => {
     const xml: string = plugin.buildShortcutsXml(PKG);
 
     expect(xml.startsWith('<?xml version="1.0" encoding="utf-8"?>')).toBe(true);
     expect(xml).toContain(`<capability android:name="${plugin.OPEN_FEATURE_INTENT}">`);
     expect(xml).toContain('<shortcut-fulfillment>');
-    expect(xml).toContain('<parameter android:name="feature" />');
+    expect(xml).toContain('<url-template android:value="carenta://capture{?feature}" />');
+    expect(xml).toContain('android:name="feature"');
+    expect(xml).toContain('android:key="feature"');
     expect(xml.match(/<capability-binding\b/g)).toHaveLength(CAPTURE_KINDS.length);
     expect(xml.match(/<shortcut\s/g)).toHaveLength(CAPTURE_KINDS.length);
     expect(xml.match(/<\/shortcut>/g)).toHaveLength(CAPTURE_KINDS.length);
@@ -80,10 +91,11 @@ describe('Android capture shortcuts plugin', () => {
     expect(() => plugin({ name: 'x', slug: 'x' })).toThrow(/android\.package/);
   });
 
-  it('is registered in the Expo config with an Android package', () => {
+  it('is registered in the Expo config with an Android package and secure store plugin', () => {
     const { exp } = getConfig(process.cwd(), { isPublicConfig: true });
 
     expect(exp.android?.package).toBe(PKG);
     expect(JSON.stringify(exp.plugins)).toContain('withCaptureShortcuts');
+    expect(JSON.stringify(exp.plugins)).toContain('expo-secure-store');
   });
 });

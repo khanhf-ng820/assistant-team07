@@ -13,6 +13,17 @@ export type CaptureKind = (typeof CAPTURE_KINDS)[number];
 
 export const CAPTURE_SCHEME = 'carenta';
 
+/**
+ * Allowlisted feature identifiers, shortcut IDs, and App Actions synonyms
+ * mapped strictly to canonical capture kinds. Keep in sync with
+ * `plugins/withCaptureShortcuts.js` (`__tests__/capture-shortcuts.test.ts` checks this).
+ */
+export const CAPTURE_FEATURE_ALIASES: Record<CaptureKind, readonly string[]> = {
+  ocr: ['ocr', 'capture_ocr', 'quét hóa đơn', 'chụp hóa đơn', 'scan receipt'],
+  voice: ['voice', 'capture_voice', 'ghi âm', 'ghi chi tiêu bằng giọng nói', 'voice expense'],
+  manual: ['manual', 'capture_manual', 'nhập tay', 'nhập thủ công', 'manual expense'],
+};
+
 export function isCaptureKind(value: unknown): value is CaptureKind {
   return typeof value === 'string' && (CAPTURE_KINDS as readonly string[]).includes(value);
 }
@@ -28,14 +39,43 @@ export function captureDeepLink(kind: CaptureKind): string {
 }
 
 /**
- * Parse an external `carenta://capture/<kind>` link. Returns the capture kind,
- * or `null` for any other scheme, host, path, extra segment or unknown kind.
- * Query strings and fragments are ignored; they never select the target.
+ * Resolve an App Actions `feature` parameter (`carenta://capture{?feature}`)
+ * against the strict allowlist of capture kinds, shortcut IDs, and synonyms.
+ */
+export function resolveCaptureFeature(feature: unknown): CaptureKind | null {
+  if (typeof feature !== 'string') return null;
+  const normalized = feature.trim().toLowerCase();
+  if (!normalized) return null;
+
+  for (const kind of CAPTURE_KINDS) {
+    if (CAPTURE_FEATURE_ALIASES[kind].includes(normalized)) {
+      return kind;
+    }
+  }
+  return null;
+}
+
+/**
+ * Parse an external `carenta://capture/<kind>` or App Actions
+ * `carenta://capture?feature=<feature>` deep link. Returns the capture kind,
+ * or `null` for any other scheme, host, extra segment, or unknown target.
  */
 export function parseCaptureDeepLink(url: string): CaptureKind | null {
-  const match = /^([a-z][a-z0-9+.-]*):\/\/capture\/([^/?#]+)\/?(?:[?#].*)?$/i.exec(url.trim());
-  if (!match) return null;
-  const [, scheme, kind] = match;
-  if (scheme.toLowerCase() !== CAPTURE_SCHEME) return null;
-  return isCaptureKind(kind) ? kind : null;
+  const trimmed = url.trim();
+  const pathMatch = /^([a-z][a-z0-9+.-]*):\/\/capture\/([^/?#]+)\/?(?:[?#].*)?$/i.exec(trimmed);
+  if (pathMatch) {
+    const [, scheme, kind] = pathMatch;
+    if (scheme.toLowerCase() !== CAPTURE_SCHEME) return null;
+    return isCaptureKind(kind) ? kind : null;
+  }
+
+  const queryMatch = /^([a-z][a-z0-9+.-]*):\/\/capture\/?\?([^#]+)(?:#.*)?$/i.exec(trimmed);
+  if (queryMatch) {
+    const [, scheme, queryString] = queryMatch;
+    if (scheme.toLowerCase() !== CAPTURE_SCHEME) return null;
+    const params = new URLSearchParams(queryString);
+    return resolveCaptureFeature(params.get('feature'));
+  }
+
+  return null;
 }

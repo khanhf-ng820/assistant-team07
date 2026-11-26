@@ -3,6 +3,7 @@ import RootLayout from '../app/_layout';
 import TabsLayout from '../app/(tabs)/_layout';
 import StatsScreen from '../app/(tabs)/index';
 import SavingsScreen from '../app/(tabs)/savings';
+import CaptureIndex from '../app/capture/index';
 import CaptureOcr from '../app/capture/ocr';
 import CaptureVoice from '../app/capture/voice';
 import CaptureManual from '../app/capture/manual';
@@ -15,6 +16,7 @@ const routes = {
   '(tabs)/_layout': TabsLayout,
   '(tabs)/index': StatsScreen,
   '(tabs)/savings': SavingsScreen,
+  'capture/index': CaptureIndex,
   'capture/ocr': CaptureOcr,
   'capture/voice': CaptureVoice,
   'capture/manual': CaptureManual,
@@ -56,7 +58,23 @@ it('opens ManualEntryModal from carenta://capture/manual and restores home on ba
   expect(screen.getByRole('tab', { name: 'Thống kê' })).toBeSelected();
 });
 
+it('resolves App Actions feature parameter query to the matching capture route', async () => {
+  await renderRouter(routes, { initialUrl: '/capture?feature=capture_voice' });
+
+  expect(screen).toHavePathname('/capture/voice');
+  expect(screen.getByRole('header', { name: 'Ghi âm' })).toBeVisible();
+});
+
+it('opens ManualEntryModal when App Actions feature resolves to manual', async () => {
+  await renderRouter(routes, { initialUrl: '/capture?feature=Nh%E1%BA%ADp%20tay' });
+
+  expect(screen).toHavePathname('/');
+  expect(screen.getByText('Thêm khoản chi')).toBeVisible();
+});
+
 it.each([
+  '/capture',
+  '/capture?feature=unknown',
   '/capture/unknown',
   '/capture/OCR',
   '/capture/camera',

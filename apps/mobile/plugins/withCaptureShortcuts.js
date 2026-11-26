@@ -65,7 +65,12 @@ function buildShortcutsXml(pkg) {
     <intent
       android:action="android.intent.action.VIEW"
       android:targetPackage="${pkg}"
-      android:targetClass="${pkg}.MainActivity" />
+      android:targetClass="${pkg}.MainActivity">
+      <url-template android:value="${SCHEME}://capture{?feature}" />
+      <parameter
+        android:name="feature"
+        android:key="feature" />
+    </intent>
   </capability>`;
 
   const items = CAPTURE_SHORTCUTS.map(

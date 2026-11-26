@@ -179,20 +179,23 @@ replace the body of the matching `app/capture/<kind>.tsx`.
 
 **Android shortcuts & external voice hooks.** `plugins/withCaptureShortcuts.js`
 adds three static launcher shortcuts (long-press the app icon) plus an
-`actions.intent.OPEN_APP_FEATURE` App Actions capability (`<shortcut-fulfillment>`
-and `<capability-binding>` backed by `res/values/carenta_shortcut_arrays.xml`)
-that map to `carenta://capture/{ocr,voice,manual}`. Static shortcuts and App
-Actions declarations exist only in a development build or an installed APK,
-**not in Expo Go**. They require `android.package` (`com.carenta.app`) in
-`app.config.ts`. Generate and inspect the native files with
+`actions.intent.OPEN_APP_FEATURE` App Actions capability (`<shortcut-fulfillment>`,
+capability-level `<url-template android:value="carenta://capture{?feature}" />` with
+`<parameter android:name="feature" android:key="feature" />`, and `<capability-binding>`
+backed by `res/values/carenta_shortcut_arrays.xml`). Incoming `?feature=` queries route
+through `app/capture/index.tsx` and `resolveCaptureFeature()` against the strict
+allowlist before redirecting to `/capture/{ocr,voice,manual}` (or `/` if unknown).
+Static shortcuts and App Actions declarations exist only in a development build or
+an installed APK, **not in Expo Go**. They require `android.package` (`com.carenta.app`)
+in `app.config.ts`. Generate and inspect the native files with
 `npx expo prebuild --platform android --no-install` (`android/` is ignored by Git;
 discard it and any `package.json` script changes that prebuild makes).
 
-**Voice assistant.** While the `OPEN_APP_FEATURE` capability and shortcut bindings
-are generated in XML and checked by Jest, Google Assistant hand-off has
-**not been tested** on a physical Android device or App Actions Test Tool. Treat
-the external voice trigger as unverified on device until tested in an installed
-development build.
+**Voice assistant.** While the `OPEN_APP_FEATURE` capability, `<url-template>`
+parameter mapping, and shortcut bindings are generated in XML and checked by Jest,
+neither the Android Studio App Actions Test Tool nor Google Assistant hand-off on
+a physical Android device has been executed yet. Treat the external voice trigger as
+unverified on device until tested in an installed development build.
 
 ### Test the deep links
 
