@@ -35,7 +35,7 @@ uv sync --project services/carenta-api --locked --python 3.12
 uv run --project services/carenta-api --env-file services/carenta-api/.env uvicorn app.main:app --app-dir services/carenta-api --host 0.0.0.0 --port 8000
 ```
 
-Phase 1 financial routes enforce `get_current_identity` and isolate state per `Student Identity` (`user_id`) inside `InMemoryRepository` (mirroring `#42`'s `owner_id` invariants); live Supabase Postgres persistence is tracked separately. There is no Gemini integration or media upload yet. `days_remaining` is derived from `today` in Asia/Ho_Chi_Minh (inclusive to month-end); use the `days_remaining` query parameter on `/budget/summary` to override it per request.
+Phase 1 financial routes enforce `get_current_identity` and isolate state per `Student Identity` (`user_id`) inside `InMemoryRepository` (mirroring `#42`'s `owner_id` invariants); live Supabase Postgres persistence is tracked separately. There is no Gemini integration yet; receipt/voice media handling (#52) is described below, and its upload endpoints arrive with #48/#49. `days_remaining` is derived from `today` in Asia/Ho_Chi_Minh (inclusive to month-end); use the `days_remaining` query parameter on `/budget/summary` to override it per request.
 
 For unauthenticated LAN testing without Supabase env vars configured, set `CARENTA_LOCAL_DEV_AUTH=true` in `.env` (automatically ignored whenever `SUPABASE_URL` or `SUPABASE_JWT_SECRET` is set).
 
@@ -58,6 +58,37 @@ uv run --env-file services/carenta-api/.env --project services/carenta-api uvico
 they do not appear in logs or `repr`. The service-role key bypasses RLS: never
 copy it into `apps/mobile` or an `EXPO_PUBLIC_*` variable; a test checks that the
 mobile sources do not reference it.
+
+## Capture media storage and sanitization (issue #52)
+
+Receipt photos and voice clips are handled by three modules. Their upload routes
+belong to the OCR and voice issues (#48/#49), so this adds no new endpoints:
+
+- `app/media.py` checks the real file type from the bytes (the client's file
+  name and Content-Type are not trusted). Receipts must be one JPEG or PNG of at
+  most 5 MB, 32 to 10,000 px per side and at most 40 MP. Voice clips must be
+  M4A (MP4/AAC, what `expo-audio` records), at most 2 MB and 30 seconds. Damaged
+  files and mismatched declared types are rejected with stable codes such as
+  `MEDIA_UNSUPPORTED_TYPE`, `MEDIA_TYPE_MISMATCH`, `MEDIA_CORRUPT` and
+  `MEDIA_TOO_LONG`. Metadata is removed before storage: JPEG EXIF/XMP and
+  comments, PNG text/EXIF/time chunks, M4A `udta`/`meta` boxes (blanked in
+  place so audio offsets stay valid). Only the standard library is used.
+- `app/media_storage.py` uploads to the private `capture-media` Supabase
+  Storage bucket with the backend service-role key, at server-generated paths
+  `{owner_id}/{kind}/{media_id}.{ext}`. Errors never contain keys.
+  `InMemoryMediaStorage` is used in tests and Local Dev Mode.
+- `app/capture_media.py` (`store_capture_media`, `purge_expired_media`) and
+  `InMemoryRepository.create_expense_with_media` store media per student and
+  link it to a confirmed expense atomically. Everything must belong to the
+  caller, be unlinked and unexpired, or nothing is written. Retries with the
+  same idempotency key return the same expense. Unconfirmed media and all voice
+  clips expire after 24 hours; confirmed receipts are kept.
+
+The database side is `supabase/migrations/20261126000000_capture_media.sql`:
+the `capture_media` table (owner-only RLS, per-kind size/type/duration checks,
+same-owner foreign key to `transactions`), the `confirm_expense_with_media()`
+function that inserts the expense and links its media in one transaction, and
+the private bucket with a read policy limited to the student's own folder.
 
 ## Phone connection
 
