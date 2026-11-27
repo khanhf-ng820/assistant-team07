@@ -2,10 +2,18 @@ import { Tabs, type BottomTabBarProps } from 'expo-router/js-tabs';
 import { Fragment, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { CaptureChooser } from '../../src/components/CaptureChooser';
+import { useOptionalCapture } from '../../src/context/CaptureContext';
 import { colors, type } from '../../src/theme';
 
 function TemplateTabBar({ state, descriptors, emitter, navigateToTab, insets }: BottomTabBarProps) {
   const [captureOpen, setCaptureOpen] = useState(false);
+  const capture = useOptionalCapture();
+  const isCaptureBusy = capture?.isCaptureBusy ?? false;
+
+  const handleOpenChooser = () => {
+    if (isCaptureBusy || captureOpen) return;
+    setCaptureOpen(true);
+  };
 
   return (
     <>
@@ -33,7 +41,14 @@ function TemplateTabBar({ state, descriptors, emitter, navigateToTab, insets }: 
                 <Text style={[styles.tabText, { color }]}>{label}</Text>
               </Pressable>
               {index === 0 ? (
-                <Pressable accessibilityRole="button" accessibilityLabel="Thêm giao dịch" style={styles.plus} onPress={() => setCaptureOpen(true)}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Thêm giao dịch"
+                  accessibilityState={{ disabled: isCaptureBusy }}
+                  disabled={isCaptureBusy}
+                  style={[styles.plus, isCaptureBusy && styles.plusDisabled]}
+                  onPress={handleOpenChooser}
+                >
                   <Text style={styles.plusText}>+</Text>
                 </Pressable>
               ) : null}
@@ -60,5 +75,6 @@ const styles = StyleSheet.create({
   tab: { flex: 1, minHeight: 56, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 },
   tabText: { ...type.body, fontWeight: '600', textAlign: 'center' },
   plus: { width: 56, height: 56, borderRadius: 28, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+  plusDisabled: { opacity: 0.5 },
   plusText: { fontSize: 30, lineHeight: 36, color: colors.surface },
 });

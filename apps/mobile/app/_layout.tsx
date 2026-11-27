@@ -5,7 +5,11 @@ import { StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from '../src/auth/AuthContext';
 import { DayTransactionsSheet } from '../src/components/calendar/DayTransactionsSheet';
+import { PermissionPromptModal } from '../src/components/capture/PermissionPromptModal';
+import { ReceiptCameraShellModal } from '../src/components/capture/ReceiptCameraShellModal';
+import { VoiceRecorderShellModal } from '../src/components/capture/VoiceRecorderShellModal';
 import { ManualEntryModal } from '../src/components/manual-entry/ManualEntryModal';
+import { CaptureProvider } from '../src/context/CaptureContext';
 import { SignInGate } from '../src/components/SignInGate';
 import { LedgerProvider } from '../src/context/LedgerContext';
 import { colors, type } from '../src/theme';
@@ -26,10 +30,15 @@ function AuthGate() {
   }
   return (
     <LedgerProvider>
-      <Slot />
-      {/* Mount shared modal sheets at root layout so they are accessible from all tabs and routes */}
-      <DayTransactionsSheet />
-      <ManualEntryModal />
+      <CaptureProvider>
+        <Slot />
+        {/* Mount shared modal sheets at root layout so they are accessible from all tabs and routes */}
+        <DayTransactionsSheet />
+        <ManualEntryModal />
+        <PermissionPromptModal />
+        <ReceiptCameraShellModal />
+        <VoiceRecorderShellModal />
+      </CaptureProvider>
     </LedgerProvider>
   );
 }
