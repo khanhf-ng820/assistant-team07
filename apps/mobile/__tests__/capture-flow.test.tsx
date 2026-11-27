@@ -10,12 +10,24 @@ import { ManualEntryModal } from '../src/components/manual-entry/ManualEntryModa
 import { CaptureProvider, useCapture } from '../src/context/CaptureContext';
 import { LedgerProvider } from '../src/context/LedgerContext';
 
-function CaptureHarness({ adapters }: { adapters?: PermissionAdapters }) {
+function CaptureHarness({
+  adapters,
+  onOcrGranted,
+  onVoiceGranted,
+}: {
+  adapters?: PermissionAdapters;
+  onOcrGranted?: () => void;
+  onVoiceGranted?: () => void;
+}) {
   const [chooserVisible, setChooserVisible] = React.useState(false);
 
   return (
     <LedgerProvider>
-      <CaptureProvider permissionAdapters={adapters}>
+      <CaptureProvider
+        permissionAdapters={adapters}
+        onOcrGranted={onOcrGranted}
+        onVoiceGranted={onVoiceGranted}
+      >
         <HarnessControls onOpenChooser={() => setChooserVisible(true)} />
         <CaptureChooser
           visible={chooserVisible}
@@ -207,5 +219,37 @@ describe('Phase 2 capture flow & hardware permissions', () => {
 
     await fireEvent.press(screen.getByTestId('voice-shell-cancel'));
     expect(screen.getByTestId('capture-flow-state')).toHaveTextContent('idle');
+  });
+
+  it('hands off directly to external OCR/Voice screen callbacks when granted without opening shell modals', async () => {
+    const onOcrGranted = jest.fn();
+    const onVoiceGranted = jest.fn();
+    const adapters: PermissionAdapters = {
+      getCamera: jest.fn().mockResolvedValue({ status: 'granted', granted: true }),
+      getMicrophone: jest.fn().mockResolvedValue({ status: 'granted', granted: true }),
+    };
+
+    await render(
+      <CaptureHarness
+        adapters={adapters}
+        onOcrGranted={onOcrGranted}
+        onVoiceGranted={onVoiceGranted}
+      />
+    );
+    await fireEvent.press(screen.getByTestId('open-chooser'));
+    await fireEvent.press(screen.getByTestId('capture-option-ocr'));
+
+    await waitFor(() => {
+      expect(onOcrGranted).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByTestId('capture-flow-state')).toHaveTextContent('idle');
+    expect(screen.queryByText('Camera đã sẵn sàng')).toBeNull();
+
+    await fireEvent.press(screen.getByTestId('trigger-voice-directly'));
+    await waitFor(() => {
+      expect(onVoiceGranted).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByTestId('capture-flow-state')).toHaveTextContent('idle');
+    expect(screen.queryByText('Micro đã sẵn sàng')).toBeNull();
   });
 });

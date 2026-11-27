@@ -46,9 +46,18 @@ const CaptureContext = createContext<CaptureContextType | undefined>(undefined);
 interface CaptureProviderProps {
   children: React.ReactNode;
   permissionAdapters?: PermissionAdapters;
+  /** Optional route handoff when camera permission is granted (e.g. PR #96 app/capture/ocr). */
+  onOcrGranted?: () => void;
+  /** Optional route handoff when microphone permission is granted (e.g. #49 voice pipeline). */
+  onVoiceGranted?: () => void;
 }
 
-export function CaptureProvider({ children, permissionAdapters }: CaptureProviderProps) {
+export function CaptureProvider({
+  children,
+  permissionAdapters,
+  onOcrGranted,
+  onVoiceGranted,
+}: CaptureProviderProps) {
   const { isManualEntryOpen, openManualEntry } = useLedger();
 
   const [captureFlow, setCaptureFlow] = useState<CaptureFlowState>('idle');
@@ -84,15 +93,26 @@ export function CaptureProvider({ children, permissionAdapters }: CaptureProvide
 
   const applyPermissionOutcome = useCallback(
     (method: 'ocr' | 'voice', result: PermissionCheckResult) => {
-      setPermissionResult(result);
       if (result.outcome === 'granted') {
+        if (method === 'ocr' && onOcrGranted) {
+          resetToIdle();
+          onOcrGranted();
+          return;
+        }
+        if (method === 'voice' && onVoiceGranted) {
+          resetToIdle();
+          onVoiceGranted();
+          return;
+        }
         awaitingSettingsReturnRef.current = false;
+        setPermissionResult(result);
         setCaptureFlow(method === 'ocr' ? 'camera_preview' : 'recording');
       } else {
+        setPermissionResult(result);
         setCaptureFlow('permission_prompt');
       }
     },
-    []
+    [onOcrGranted, onVoiceGranted, resetToIdle]
   );
 
   // Re-check permission automatically when returning from OS settings
