@@ -51,13 +51,13 @@ export function normalizePermissionResponse(
   };
 }
 
-function getDefaultPermissionFn(
+async function getDefaultPermissionFn(
   kind: CapturePermissionKind,
   action: 'check' | 'request'
-): PermissionFn | null {
+): Promise<PermissionFn | null> {
   try {
     if (kind === 'camera') {
-      const { Camera } = require('expo-camera') as typeof import('expo-camera');
+      const { Camera } = await import('expo-camera');
       const fn =
         action === 'check'
           ? Camera?.getCameraPermissionsAsync
@@ -66,7 +66,7 @@ function getDefaultPermissionFn(
     }
 
     if (kind === 'media_library') {
-      const ImagePicker = require('expo-image-picker') as typeof import('expo-image-picker');
+      const ImagePicker = await import('expo-image-picker');
       const fn =
         action === 'check'
           ? ImagePicker?.getMediaLibraryPermissionsAsync
@@ -74,7 +74,7 @@ function getDefaultPermissionFn(
       return fn ? () => fn() : null;
     }
 
-    const ExpoAudio = require('expo-audio') as typeof import('expo-audio');
+    const ExpoAudio = await import('expo-audio');
     const fn =
       action === 'check'
         ? ExpoAudio?.getRecordingPermissionsAsync
@@ -85,11 +85,11 @@ function getDefaultPermissionFn(
   }
 }
 
-function resolvePermissionAdapter(
+async function resolvePermissionAdapter(
   kind: CapturePermissionKind,
   action: 'check' | 'request',
   adapters?: PermissionAdapters
-): PermissionFn | null {
+): Promise<PermissionFn | null> {
   if (action === 'check') {
     if (kind === 'camera' && adapters?.getCamera) return adapters.getCamera;
     if (kind === 'media_library' && adapters?.getMediaLibrary) return adapters.getMediaLibrary;
@@ -107,7 +107,7 @@ export async function checkCapturePermission(
   kind: CapturePermissionKind,
   adapters?: PermissionAdapters
 ): Promise<PermissionCheckResult> {
-  const checkFn = resolvePermissionAdapter(kind, 'check', adapters);
+  const checkFn = await resolvePermissionAdapter(kind, 'check', adapters);
   if (!checkFn) {
     return { kind, outcome: 'unavailable', canAskAgain: false };
   }
@@ -128,7 +128,7 @@ export async function requestCapturePermission(
   kind: CapturePermissionKind,
   adapters?: PermissionAdapters
 ): Promise<PermissionCheckResult> {
-  const checkFn = resolvePermissionAdapter(kind, 'check', adapters);
+  const checkFn = await resolvePermissionAdapter(kind, 'check', adapters);
   if (checkFn) {
     try {
       const current = normalizePermissionResponse(kind, await checkFn());
@@ -140,7 +140,7 @@ export async function requestCapturePermission(
     }
   }
 
-  const requestFn = resolvePermissionAdapter(kind, 'request', adapters);
+  const requestFn = await resolvePermissionAdapter(kind, 'request', adapters);
   if (!requestFn) {
     return { kind, outcome: 'unavailable', canAskAgain: false };
   }

@@ -118,7 +118,7 @@ export function CaptureProvider({ children, permissionAdapters }: CaptureProvide
     });
 
     return () => {
-      subscription.remove();
+      subscription?.remove?.();
     };
   }, [activeMethod, applyPermissionOutcome, captureFlow, permissionAdapters, permissionResult]);
 
@@ -259,6 +259,10 @@ export function CaptureProvider({ children, permissionAdapters }: CaptureProvide
   );
 
   return <CaptureContext.Provider value={value}>{children}</CaptureContext.Provider>;
+}
+
+export function useOptionalCapture(): CaptureContextType | null {
+  return useContext(CaptureContext) ?? null;
 }
 
 export function useCapture(): CaptureContextType {

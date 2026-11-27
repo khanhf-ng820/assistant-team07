@@ -182,11 +182,16 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function useLedger(): LedgerContextType {
+export function useOptionalLedger(): LedgerContextType | null {
   const data = useContext(LedgerDataContext);
   const ui = useContext(LedgerUIContext);
-  if (!data || !ui) {
+  return useMemo(() => (data && ui ? { ...data, ...ui } : null), [data, ui]);
+}
+
+export function useLedger(): LedgerContextType {
+  const ctx = useOptionalLedger();
+  if (!ctx) {
     throw new Error('useLedger must be used within a LedgerProvider');
   }
-  return useMemo(() => ({ ...data, ...ui }), [data, ui]);
+  return ctx;
 }

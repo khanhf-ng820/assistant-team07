@@ -10,8 +10,8 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { CaptureMethod, useCapture } from '../context/CaptureContext';
-import { useLedger } from '../context/LedgerContext';
+import { CaptureMethod, useOptionalCapture } from '../context/CaptureContext';
+import { useOptionalLedger } from '../context/LedgerContext';
 import { colors, type } from '../theme';
 
 interface CaptureChooserProps {
@@ -33,22 +33,10 @@ export function CaptureChooser({
   onSelectVoice,
   onSelectMethod,
 }: CaptureChooserProps) {
-  let startCaptureFromContext: ((method: CaptureMethod) => Promise<void>) | undefined;
-  let openManualFromLedger: (() => void) | undefined;
-
-  try {
-    const capture = useCapture();
-    startCaptureFromContext = capture.startCapture;
-  } catch {
-    // Graceful fallback when rendered in isolated component tests without CaptureProvider
-  }
-
-  try {
-    const ledger = useLedger();
-    openManualFromLedger = ledger.openManualEntry;
-  } catch {
-    // Graceful fallback when rendered in isolated component tests without LedgerProvider
-  }
+  const capture = useOptionalCapture();
+  const ledger = useOptionalLedger();
+  const startCaptureFromContext = capture?.startCapture;
+  const openManualFromLedger = ledger?.openManualEntry;
 
   const fadeAnim = useRef(new Animated.Value(visible ? 1 : 0)).current;
   const slideAnim = useRef(new Animated.Value(visible ? 0 : 20)).current;
