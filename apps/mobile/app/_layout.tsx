@@ -6,8 +6,11 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from '../src/auth/AuthContext';
 import { DayTransactionsSheet } from '../src/components/calendar/DayTransactionsSheet';
 import { ManualEntryModal } from '../src/components/manual-entry/ManualEntryModal';
+import { BudgetRecoveryModal } from '../src/components/notifications/BudgetRecoveryModal';
+import { NotificationSettingsModal } from '../src/components/notifications/NotificationSettingsModal';
 import { SignInGate } from '../src/components/SignInGate';
 import { LedgerProvider } from '../src/context/LedgerContext';
+import { NotificationProvider } from '../src/context/NotificationContext';
 import { colors, type } from '../src/theme';
 
 function AuthGate() {
@@ -26,10 +29,14 @@ function AuthGate() {
   }
   return (
     <LedgerProvider>
-      <Slot />
-      {/* Mount shared modal sheets at root layout so they are accessible from all tabs and routes */}
-      <DayTransactionsSheet />
-      <ManualEntryModal />
+      <NotificationProvider>
+        <Slot />
+        {/* Mount shared modal sheets at root layout so they are accessible from all tabs and routes */}
+        <DayTransactionsSheet />
+        <ManualEntryModal />
+        <BudgetRecoveryModal />
+        <NotificationSettingsModal />
+      </NotificationProvider>
     </LedgerProvider>
   );
 }
