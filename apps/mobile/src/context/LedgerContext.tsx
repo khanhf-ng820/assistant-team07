@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
 import {
   buildDailyExpenseSummary,
   DAILY_BUDGET_LIMIT,
@@ -8,10 +8,21 @@ import {
   INITIAL_TRANSACTIONS,
 } from '../fixtures/initialLedger';
 import {
+  AiExpenseDraft,
+  formatVietnamTimeFromTimestamp,
+  resolveDraftNote,
+  validateAiDraft,
+} from '../types/aiDraft';
+import {
   DailyExpenseSummary,
+  formatVND,
   MonthlyBudgetSummary,
   Transaction,
 } from '../types/transaction';
+
+export type ConfirmAiDraftResult =
+  | { ok: true; deduplicated: boolean }
+  | { ok: false; error: string };
 
 interface LedgerDataContextType {
   availableBalance: number;
@@ -38,6 +49,15 @@ interface LedgerUIContextType {
   isManualEntryOpen: boolean;
   openManualEntry: () => void;
   closeManualEntry: () => void;
+  pendingAiDraft: AiExpenseDraft | null;
+  isAiConfirmationOpen: boolean;
+  openAiConfirmation: (draft: AiExpenseDraft) => void;
+  updatePendingAiDraft: (draft: AiExpenseDraft) => void;
+  closeAiConfirmation: () => void;
+  confirmAiDraft: (draft?: AiExpenseDraft) => ConfirmAiDraftResult;
+  toastMessage: string | null;
+  showSuccessToast: (message: string) => void;
+  dismissToast: () => void;
 }
 
 export type LedgerContextType = LedgerDataContextType & LedgerUIContextType;
@@ -54,6 +74,10 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
   const [transactions, setTransactions] = useState<Transaction[]>(INITIAL_TRANSACTIONS);
   const [isDaySheetOpen, setIsDaySheetOpen] = useState<boolean>(false);
   const [isManualEntryOpen, setIsManualEntryOpen] = useState<boolean>(false);
+  const [pendingAiDraft, setPendingAiDraft] = useState<AiExpenseDraft | null>(null);
+  const [isAiConfirmationOpen, setIsAiConfirmationOpen] = useState<boolean>(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const confirmedDraftIdsRef = useRef<Set<string>>(new Set());
 
   const toggleBalanceVisibility = useCallback(() => {
     setIsBalanceVisible((prev) => !prev);
@@ -78,6 +102,28 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     setIsManualEntryOpen(false);
   }, []);
 
+  const openAiConfirmation = useCallback((draft: AiExpenseDraft) => {
+    setPendingAiDraft(draft);
+    setIsAiConfirmationOpen(true);
+  }, []);
+
+  const updatePendingAiDraft = useCallback((draft: AiExpenseDraft) => {
+    setPendingAiDraft(draft);
+  }, []);
+
+  const closeAiConfirmation = useCallback(() => {
+    setIsAiConfirmationOpen(false);
+    setPendingAiDraft(null);
+  }, []);
+
+  const showSuccessToast = useCallback((message: string) => {
+    setToastMessage(message);
+  }, []);
+
+  const dismissToast = useCallback(() => {
+    setToastMessage(null);
+  }, []);
+
   const setActiveYearMonth = useCallback((year: number, month: number) => {
     setActiveYear(year);
     setActiveMonth(month);
@@ -96,6 +142,46 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
       setAvailableBalance((prev) => prev - txData.amount);
     },
     []
+  );
+
+  const confirmAiDraft = useCallback(
+    (draftOverride?: AiExpenseDraft): ConfirmAiDraftResult => {
+      const targetDraft = draftOverride ?? pendingAiDraft;
+      if (!targetDraft) {
+        return { ok: false, error: 'Không tìm thấy bản nháp giao dịch để xác nhận.' };
+      }
+
+      const validation = validateAiDraft(targetDraft);
+      if (!validation.isValid || targetDraft.amount === null || !targetDraft.categoryId) {
+        return { ok: false, error: 'Vui lòng bổ sung đầy đủ số tiền và danh mục trước khi xác nhận.' };
+      }
+
+      if (confirmedDraftIdsRef.current.has(targetDraft.draftId)) {
+        setIsAiConfirmationOpen(false);
+        setPendingAiDraft(null);
+        return { ok: true, deduplicated: true };
+      }
+
+      confirmedDraftIdsRef.current.add(targetDraft.draftId);
+      const txTime =
+        targetDraft.time ??
+        formatVietnamTimeFromTimestamp(new Date().toISOString()) ??
+        '00:00';
+
+      addTransaction({
+        amount: targetDraft.amount,
+        categoryId: targetDraft.categoryId,
+        note: resolveDraftNote(targetDraft),
+        date: targetDraft.date,
+        time: txTime,
+      });
+
+      setIsAiConfirmationOpen(false);
+      setPendingAiDraft(null);
+      setToastMessage(`Đã lưu khoản chi ${formatVND(targetDraft.amount)} vào sổ chi tiêu`);
+      return { ok: true, deduplicated: false };
+    },
+    [pendingAiDraft, addTransaction]
   );
 
   // Daily summaries dynamically generated for the active year and month
@@ -165,6 +251,15 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
       isManualEntryOpen,
       openManualEntry,
       closeManualEntry,
+      pendingAiDraft,
+      isAiConfirmationOpen,
+      openAiConfirmation,
+      updatePendingAiDraft,
+      closeAiConfirmation,
+      confirmAiDraft,
+      toastMessage,
+      showSuccessToast,
+      dismissToast,
     };
   }, [
     isDaySheetOpen,
@@ -173,6 +268,15 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     isManualEntryOpen,
     openManualEntry,
     closeManualEntry,
+    pendingAiDraft,
+    isAiConfirmationOpen,
+    openAiConfirmation,
+    updatePendingAiDraft,
+    closeAiConfirmation,
+    confirmAiDraft,
+    toastMessage,
+    showSuccessToast,
+    dismissToast,
   ]);
 
   return (

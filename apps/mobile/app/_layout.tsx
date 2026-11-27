@@ -1,14 +1,36 @@
-import { Slot } from 'expo-router';
+import { Slot, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from '../src/auth/AuthContext';
+import { Toast } from '../src/components/Toast';
+import { AiConfirmationModal } from '../src/components/ai-confirmation/AiConfirmationModal';
 import { DayTransactionsSheet } from '../src/components/calendar/DayTransactionsSheet';
 import { ManualEntryModal } from '../src/components/manual-entry/ManualEntryModal';
 import { SignInGate } from '../src/components/SignInGate';
-import { LedgerProvider } from '../src/context/LedgerContext';
+import { LedgerProvider, useLedger } from '../src/context/LedgerContext';
 import { colors, type } from '../src/theme';
+
+function RootOverlays() {
+  const router = useRouter();
+  const { toastMessage, dismissToast } = useLedger();
+
+  return (
+    <>
+      <DayTransactionsSheet />
+      <ManualEntryModal />
+      <AiConfirmationModal onNavigateToStats={() => router.replace('/')} />
+      <Toast
+        visible={Boolean(toastMessage)}
+        message={toastMessage ?? ''}
+        type="success"
+        duration={3000}
+        onDismiss={dismissToast}
+      />
+    </>
+  );
+}
 
 function AuthGate() {
   const { status } = useAuth();
@@ -27,9 +49,8 @@ function AuthGate() {
   return (
     <LedgerProvider>
       <Slot />
-      {/* Mount shared modal sheets at root layout so they are accessible from all tabs and routes */}
-      <DayTransactionsSheet />
-      <ManualEntryModal />
+      {/* Mount shared modal sheets & toast at root layout so they are accessible from all tabs and routes */}
+      <RootOverlays />
     </LedgerProvider>
   );
 }
