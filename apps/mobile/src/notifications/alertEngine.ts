@@ -1,5 +1,17 @@
+import type { BudgetSummaryResponse } from '../api/contracts';
 import { formatVndDigits } from '../format';
 import { DailyExpenseSummary } from '../types/transaction';
+
+export type ServerBudgetRecoveryInput = Pick<
+  BudgetSummaryResponse,
+  | 'daily_budget'
+  | 'spent_today'
+  | 'overspent_amount_today'
+  | 'days_remaining'
+  | 'subsequent_daily_budget'
+>;
+
+export type BudgetRecoverySource = 'server_budget_summary' | 'local_ledger_estimate';
 
 export type ProactiveAlertKind = 'overspending' | 'evening_checkin';
 
@@ -32,6 +44,7 @@ export interface BudgetRecoveryPlan {
   adjustedDailyAllowance: number;
   canRecoverWithinMonth: boolean;
   summaryText: string;
+  source: BudgetRecoverySource;
 }
 
 export interface ReminderPreferences {
@@ -39,6 +52,7 @@ export interface ReminderPreferences {
   eveningHour: number;
   eveningMinute: number;
   overspendingAlertsEnabled: boolean;
+  hideAmountOnPush: boolean;
 }
 
 export const DEFAULT_EVENING_CHECKIN_HOUR = 20;
@@ -49,12 +63,15 @@ export const DEFAULT_REMINDER_PREFERENCES: ReminderPreferences = {
   eveningHour: DEFAULT_EVENING_CHECKIN_HOUR,
   eveningMinute: DEFAULT_EVENING_CHECKIN_MINUTE,
   overspendingAlertsEnabled: true,
+  hideAmountOnPush: false,
 };
 
 export const EVENING_CHECKIN_TITLE = 'Nhắc nhở buổi tối';
 export const EVENING_CHECKIN_MESSAGE = 'Buổi tối: Bạn chưa nhập khoản chi nào hôm nay';
 
 export const OVERSPENDING_ALERT_TITLE = 'Cảnh báo vượt hạn mức ngày';
+export const OVERSPENDING_PRIVATE_PUSH_MESSAGE =
+  'Cảnh cáo vung tay quá trớn: Hôm nay bạn đã vượt hạn mức ngày!';
 
 export const GENERIC_SCHEDULED_REMINDER_TITLE = 'Nhắc nhở ghi chi tiêu CARENTA';
 export const GENERIC_SCHEDULED_REMINDER_BODY = 'Kiểm tra và ghi lại chi tiêu hôm nay';
@@ -69,6 +86,16 @@ const ALLOWED_NOTIFICATION_TARGETS = new Set<NotificationActionTarget>([
 export function formatOverspendingAlertMessage(overspentAmount: number): string {
   const normalized = Math.max(0, Math.trunc(overspentAmount));
   return `Cảnh cáo vung tay quá trớn: Hôm nay bạn đã vượt hạn mức ${formatVndDigits(normalized)}đ!`;
+}
+
+/** Formats the overspending local push body, optionally hiding exact amounts on the lock screen. */
+export function formatOverspendingPushBody(
+  overspentAmount: number,
+  hideAmount: boolean
+): string {
+  return hideAmount
+    ? OVERSPENDING_PRIVATE_PUSH_MESSAGE
+    : formatOverspendingAlertMessage(overspentAmount);
 }
 
 /**
@@ -132,14 +159,88 @@ export function evaluateEveningCheckInAlert(
   };
 }
 
+function formatRecoverySummaryText(
+  overspentAmount: number,
+  remainingDaysInMonth: number,
+  suggestedDailyReduction: number,
+  adjustedDailyAllowance: number,
+  canRecoverWithinMonth: boolean
+): string {
+  if (overspentAmount === 0) {
+    return 'Chi tiêu hôm nay vẫn nằm trong hạn mức ngày đã đặt.';
+  }
+  if (remainingDaysInMonth === 0) {
+    return `Hôm nay là ngày cuối tháng; phần vượt ${formatVndDigits(overspentAmount)}đ sẽ cần cân đối lại khi lập kế hoạch tháng mới.`;
+  }
+  return canRecoverWithinMonth
+    ? `Giảm khoảng ${formatVndDigits(suggestedDailyReduction)}đ/ngày trong ${remainingDaysInMonth} ngày còn lại của tháng (còn ${formatVndDigits(adjustedDailyAllowance)}đ/ngày) để bù phần vượt mức.`
+    : `Khoản vượt ${formatVndDigits(overspentAmount)}đ lớn hơn tổng hạn mức của ${remainingDaysInMonth} ngày còn lại; cần xem lại khoản chi hoặc bổ sung nguồn thu.`;
+}
+
+/**
+ * Builds the budget-recovery preview directly from the deterministic server
+ * `/budget/summary` response (`subsequent_daily_budget`) so mobile and API never drift.
+ */
+export function buildBudgetRecoveryPlanFromServerSummary(
+  date: string,
+  serverSummary: ServerBudgetRecoveryInput
+): BudgetRecoveryPlan {
+  const dailyBudgetLimit = Math.max(0, Math.trunc(serverSummary.daily_budget));
+  const spentToday = Math.max(0, Math.trunc(serverSummary.spent_today));
+  const overspentAmount = Math.max(0, Math.trunc(serverSummary.overspent_amount_today));
+  const remainingDaysInMonth = Math.max(0, Math.trunc(serverSummary.days_remaining) - 1);
+  const adjustedDailyAllowance =
+    overspentAmount === 0
+      ? dailyBudgetLimit
+      : remainingDaysInMonth === 0
+        ? 0
+        : Math.max(0, Math.trunc(serverSummary.subsequent_daily_budget));
+
+  const suggestedDailyReduction =
+    overspentAmount === 0
+      ? 0
+      : remainingDaysInMonth === 0
+        ? overspentAmount
+        : Math.max(0, dailyBudgetLimit - adjustedDailyAllowance);
+
+  const canRecoverWithinMonth =
+    overspentAmount === 0 || (remainingDaysInMonth > 0 && adjustedDailyAllowance > 0);
+
+  return {
+    date,
+    dailyBudgetLimit,
+    spentToday,
+    overspentAmount,
+    remainingDaysInMonth,
+    suggestedDailyReduction,
+    adjustedDailyAllowance,
+    canRecoverWithinMonth,
+    summaryText: formatRecoverySummaryText(
+      overspentAmount,
+      remainingDaysInMonth,
+      suggestedDailyReduction,
+      adjustedDailyAllowance,
+      canRecoverWithinMonth
+    ),
+    source: 'server_budget_summary',
+  };
+}
+
 /**
  * Computes a deterministic budget-recovery preview for an overspent day
  * without modifying savings goals or creating transactions (plan §7 & §10).
+ * Uses the server `/budget/summary` figures when available, falling back to
+ * the same `floor(remainingPool / remainingDays)` integer rule locally.
  */
 export function buildBudgetRecoveryPlan(
   summary: DailyExpenseSummary,
-  dailyBudgetLimit: number
+  dailyBudgetLimit: number,
+  serverSummary?: ServerBudgetRecoveryInput
 ): BudgetRecoveryPlan {
+  if (serverSummary) {
+    return buildBudgetRecoveryPlanFromServerSummary(summary.date, serverSummary);
+  }
+
   const safeLimit = Math.max(0, Math.trunc(dailyBudgetLimit));
   const spentToday = Math.max(0, Math.trunc(summary.totalSpent));
   const overspentAmount = Math.max(0, spentToday - safeLimit);
@@ -157,7 +258,8 @@ export function buildBudgetRecoveryPlan(
       suggestedDailyReduction: 0,
       adjustedDailyAllowance: safeLimit,
       canRecoverWithinMonth: true,
-      summaryText: 'Chi tiêu hôm nay vẫn nằm trong hạn mức ngày đã đặt.',
+      summaryText: formatRecoverySummaryText(0, remainingDaysInMonth, 0, safeLimit, true),
+      source: 'local_ledger_estimate',
     };
   }
 
@@ -171,17 +273,16 @@ export function buildBudgetRecoveryPlan(
       suggestedDailyReduction: overspentAmount,
       adjustedDailyAllowance: 0,
       canRecoverWithinMonth: false,
-      summaryText: `Hôm nay là ngày cuối tháng; phần vượt ${formatVndDigits(overspentAmount)}đ sẽ cần cân đối lại khi lập kế hoạch tháng mới.`,
+      summaryText: formatRecoverySummaryText(overspentAmount, 0, overspentAmount, 0, false),
+      source: 'local_ledger_estimate',
     };
   }
 
-  const suggestedDailyReduction = Math.ceil(overspentAmount / remainingDaysInMonth);
-  const adjustedDailyAllowance = Math.max(0, safeLimit - suggestedDailyReduction);
-  const canRecoverWithinMonth = suggestedDailyReduction <= safeLimit;
-
-  const summaryText = canRecoverWithinMonth
-    ? `Giảm khoảng ${formatVndDigits(suggestedDailyReduction)}đ/ngày trong ${remainingDaysInMonth} ngày còn lại của tháng (còn ${formatVndDigits(adjustedDailyAllowance)}đ/ngày) để bù phần vượt mức.`
-    : `Khoản vượt ${formatVndDigits(overspentAmount)}đ lớn hơn tổng hạn mức của ${remainingDaysInMonth} ngày còn lại; cần xem lại khoản chi hoặc bổ sung nguồn thu.`;
+  const remainingPool = Math.max(0, safeLimit * (remainingDaysInMonth + 1) - spentToday);
+  const adjustedDailyAllowance =
+    remainingPool > 0 ? Math.floor(remainingPool / remainingDaysInMonth) : 0;
+  const suggestedDailyReduction = Math.max(0, safeLimit - adjustedDailyAllowance);
+  const canRecoverWithinMonth = remainingPool > 0 && adjustedDailyAllowance > 0;
 
   return {
     date: summary.date,
@@ -192,7 +293,14 @@ export function buildBudgetRecoveryPlan(
     suggestedDailyReduction,
     adjustedDailyAllowance,
     canRecoverWithinMonth,
-    summaryText,
+    summaryText: formatRecoverySummaryText(
+      overspentAmount,
+      remainingDaysInMonth,
+      suggestedDailyReduction,
+      adjustedDailyAllowance,
+      canRecoverWithinMonth
+    ),
+    source: 'local_ledger_estimate',
   };
 }
 

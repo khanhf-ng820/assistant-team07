@@ -1,11 +1,14 @@
 import {
   buildBudgetRecoveryPlan,
+  buildBudgetRecoveryPlanFromServerSummary,
   clampReminderTime,
   evaluateEveningCheckInAlert,
   evaluateOverspendingAlert,
   EVENING_CHECKIN_MESSAGE,
   formatOverspendingAlertMessage,
+  formatOverspendingPushBody,
   formatReminderTime,
+  OVERSPENDING_PRIVATE_PUSH_MESSAGE,
   parseNotificationActionTarget,
 } from '../src/notifications/alertEngine';
 import { DailyExpenseSummary } from '../src/types/transaction';
@@ -31,6 +34,12 @@ describe('alertEngine deterministic rules', () => {
     );
     expect(formatOverspendingAlertMessage(-500)).toBe(
       'Cảnh cáo vung tay quá trớn: Hôm nay bạn đã vượt hạn mức 0đ!'
+    );
+    expect(formatOverspendingPushBody(45000, false)).toBe(
+      'Cảnh cáo vung tay quá trớn: Hôm nay bạn đã vượt hạn mức 45.000đ!'
+    );
+    expect(formatOverspendingPushBody(45000, true)).toBe(
+      OVERSPENDING_PRIVATE_PUSH_MESSAGE
     );
   });
 
@@ -103,9 +112,44 @@ describe('alertEngine deterministic rules', () => {
     const extremeOverrun = makeSummary({ date: '2024-07-30', dayNumber: 30, totalSpent: 700000 });
     const overrunPlan = buildBudgetRecoveryPlan(extremeOverrun, 280000);
     expect(overrunPlan.remainingDaysInMonth).toBe(1);
-    expect(overrunPlan.suggestedDailyReduction).toBe(420000);
+    expect(overrunPlan.suggestedDailyReduction).toBe(280000);
     expect(overrunPlan.adjustedDailyAllowance).toBe(0);
     expect(overrunPlan.canRecoverWithinMonth).toBe(false);
+    expect(overrunPlan.source).toBe('local_ledger_estimate');
+  });
+
+  it('aligns recovery plan directly with server /budget/summary subsequent_daily_budget', () => {
+    const day10 = makeSummary({ date: '2024-07-10', dayNumber: 10, totalSpent: 325000 });
+    const serverPlan = buildBudgetRecoveryPlan(day10, 280000, {
+      daily_budget: 280000,
+      spent_today: 325000,
+      overspent_amount_today: 45000,
+      days_remaining: 22,
+      subsequent_daily_budget: 277857,
+    });
+    expect(serverPlan).toMatchObject({
+      source: 'server_budget_summary',
+      remainingDaysInMonth: 21,
+      suggestedDailyReduction: 2143,
+      adjustedDailyAllowance: 277857,
+      canRecoverWithinMonth: true,
+    });
+
+    const directServer = buildBudgetRecoveryPlanFromServerSummary('2024-07-10', {
+      daily_budget: 200000,
+      spent_today: 260000,
+      overspent_amount_today: 60000,
+      days_remaining: 11,
+      subsequent_daily_budget: 194000,
+    });
+    expect(directServer).toMatchObject({
+      source: 'server_budget_summary',
+      dailyBudgetLimit: 200000,
+      overspentAmount: 60000,
+      remainingDaysInMonth: 10,
+      suggestedDailyReduction: 6000,
+      adjustedDailyAllowance: 194000,
+    });
   });
 
   it('validates notification action allowlist and clamps reminder time bounds', () => {

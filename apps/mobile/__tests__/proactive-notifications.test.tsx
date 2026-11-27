@@ -11,7 +11,9 @@ import { NotificationProvider, useNotifications } from '../src/context/Notificat
 import {
   EVENING_CHECKIN_MESSAGE,
   GENERIC_SCHEDULED_REMINDER_BODY,
+  OVERSPENDING_PRIVATE_PUSH_MESSAGE,
   ReminderPreferences,
+  ServerBudgetRecoveryInput,
 } from '../src/notifications/alertEngine';
 import {
   NotificationAdapter,
@@ -121,10 +123,12 @@ function TestApp({
   adapter,
   storage,
   nowProvider = DEFAULT_TEST_NOW,
+  serverBudgetSummary,
 }: {
   adapter: NotificationAdapter;
   storage?: ReminderPreferencesStorage;
   nowProvider?: () => Date;
+  serverBudgetSummary?: ServerBudgetRecoveryInput | null;
 }) {
   const resolvedStorage = React.useMemo(
     () => storage ?? createMemoryStorage(),
@@ -137,6 +141,7 @@ function TestApp({
         adapter={adapter}
         preferencesStorage={resolvedStorage}
         nowProvider={nowProvider}
+        serverBudgetSummary={serverBudgetSummary}
       >
         <HarnessControls />
         <ProactiveAlertBannerList />
@@ -178,6 +183,7 @@ describe('Phase 3 proactive push notifications & overspending alert UI', () => {
       eveningHour: 20,
       eveningMinute: 0,
       overspendingAlertsEnabled: true,
+      hideAmountOnPush: false,
     });
 
     await render(<TestApp adapter={adapter} storage={storage} />);
@@ -220,6 +226,7 @@ describe('Phase 3 proactive push notifications & overspending alert UI', () => {
       eveningHour: 20,
       eveningMinute: 0,
       overspendingAlertsEnabled: true,
+      hideAmountOnPush: false,
     });
 
     await render(<TestApp adapter={adapter} storage={storage} />);
@@ -395,6 +402,7 @@ describe('Phase 3 proactive push notifications & overspending alert UI', () => {
       eveningHour: 20,
       eveningMinute: 0,
       overspendingAlertsEnabled: true,
+      hideAmountOnPush: false,
     });
 
     await render(<TestApp adapter={adapter} storage={storage} />);
@@ -442,6 +450,65 @@ describe('Phase 3 proactive push notifications & overspending alert UI', () => {
 
     expect(await screen.findByTestId('notification-settings-error')).toHaveTextContent(
       /Bạn chưa cấp quyền thông báo/
+    );
+  });
+
+  it('hides exact VND amount on lock-screen push when hideAmountOnPush is enabled while keeping in-app banner exact', async () => {
+    const { adapter } = createMockAdapter();
+    const storage = createMemoryStorage({
+      enabled: true,
+      eveningHour: 20,
+      eveningMinute: 0,
+      overspendingAlertsEnabled: true,
+      hideAmountOnPush: false,
+    });
+
+    await render(<TestApp adapter={adapter} storage={storage} />);
+
+    // Enable lock-screen amount hiding inside NotificationSettingsModal
+    await fireEvent.press(screen.getByTestId('open-notification-settings-button'));
+    await fireEvent.press(screen.getByTestId('toggle-hide-amount-push-button'));
+    await waitFor(() => {
+      expect(screen.getByTestId('toggle-hide-amount-push-button')).toHaveTextContent(/Đang ẩn/);
+    });
+    await fireEvent.press(screen.getByTestId('notification-settings-close'));
+
+    // Trigger overspending on Day 9
+    await fireEvent.press(screen.getByTestId('select-day-9'));
+    await fireEvent.press(screen.getByTestId('log-overspending-on-day-9'));
+
+    await waitFor(() => {
+      expect(adapter.presentLocalNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: OVERSPENDING_PRIVATE_PUSH_MESSAGE,
+        })
+      );
+    });
+    // Unlocked in-app banner still shows exact VND amount
+    expect(screen.getByTestId('alert-message-overspending')).toHaveTextContent(/45\.000đ/);
+  });
+
+  it('uses server /budget/summary subsequent_daily_budget in BudgetRecoveryModal when provided', async () => {
+    const { adapter } = createMockAdapter();
+
+    await render(
+      <TestApp
+        adapter={adapter}
+        serverBudgetSummary={{
+          daily_budget: 280000,
+          spent_today: 290000,
+          overspent_amount_today: 10000,
+          days_remaining: 21,
+          subsequent_daily_budget: 279500,
+        }}
+      />
+    );
+
+    await fireEvent.press(await screen.findByTestId('alert-primary-action-overspending'));
+    expect(screen.getByTestId('budget-recovery-modal')).toBeVisible();
+    expect(screen.getByTestId('recovery-adjusted-allowance')).toHaveTextContent('279.500 ₫');
+    expect(screen.getByTestId('recovery-source-label')).toHaveTextContent(
+      'Nguồn tính toán: /budget/summary'
     );
   });
 });

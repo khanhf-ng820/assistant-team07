@@ -77,6 +77,34 @@ describe('localNotifications permission & storage boundaries', () => {
     mockGetItemAsync.mockResolvedValueOnce(JSON.stringify({ enabled: 'yes' }));
     await expect(storage.load()).rejects.toMatchObject({ code: 'STORAGE_READ_FAILED' });
 
+    mockGetItemAsync.mockResolvedValueOnce(
+      JSON.stringify({
+        enabled: true,
+        eveningHour: 20,
+        eveningMinute: 0,
+        overspendingAlertsEnabled: true,
+        hideAmountOnPush: 'bad',
+      })
+    );
+    await expect(storage.load()).rejects.toMatchObject({ code: 'STORAGE_READ_FAILED' });
+
+    // Backwards-compatible load when hideAmountOnPush was omitted in older payloads
+    mockGetItemAsync.mockResolvedValueOnce(
+      JSON.stringify({
+        enabled: true,
+        eveningHour: 20,
+        eveningMinute: 30,
+        overspendingAlertsEnabled: true,
+      })
+    );
+    await expect(storage.load()).resolves.toEqual({
+      enabled: true,
+      eveningHour: 20,
+      eveningMinute: 30,
+      overspendingAlertsEnabled: true,
+      hideAmountOnPush: false,
+    });
+
     mockSetItemAsync.mockRejectedValueOnce(new Error('Keychain locked'));
     await expect(
       storage.save({
@@ -84,6 +112,7 @@ describe('localNotifications permission & storage boundaries', () => {
         eveningHour: 20,
         eveningMinute: 30,
         overspendingAlertsEnabled: true,
+        hideAmountOnPush: false,
       })
     ).rejects.toMatchObject({ code: 'STORAGE_WRITE_FAILED' });
 
@@ -93,6 +122,7 @@ describe('localNotifications permission & storage boundaries', () => {
       eveningHour: 21,
       eveningMinute: 15,
       overspendingAlertsEnabled: false,
+      hideAmountOnPush: true,
     });
     expect(mockSetItemAsync).toHaveBeenLastCalledWith(
       'test.prefs',
@@ -101,6 +131,7 @@ describe('localNotifications permission & storage boundaries', () => {
         eveningHour: 21,
         eveningMinute: 15,
         overspendingAlertsEnabled: false,
+        hideAmountOnPush: true,
       })
     );
   });

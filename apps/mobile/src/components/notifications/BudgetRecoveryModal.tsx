@@ -115,6 +115,11 @@ export function BudgetRecoveryModal() {
                 <Text style={styles.noticeText}>
                   Đây chỉ là bản xem trước gợi ý — không tự động thay đổi mục tiêu tiết kiệm hay ghi nhận giao dịch.
                 </Text>
+                <Text style={styles.sourceText} testID="recovery-source-label">
+                  {recoveryPlan.source === 'server_budget_summary'
+                    ? 'Nguồn tính toán: /budget/summary'
+                    : 'Nguồn tính toán: Ước tính từ sổ chi cục bộ'}
+                </Text>
               </View>
             </ScrollView>
           ) : null}
@@ -269,10 +274,16 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceSubtle,
     borderRadius: 12,
     padding: 12,
+    gap: 4,
   },
   noticeText: {
     ...type.caption,
     color: colors.muted,
+  },
+  sourceText: {
+    ...type.captionBold,
+    color: colors.subtle,
+    fontSize: 11,
   },
   actionsRow: {
     flexDirection: 'row',

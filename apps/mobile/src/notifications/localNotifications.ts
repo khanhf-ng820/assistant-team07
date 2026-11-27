@@ -177,6 +177,9 @@ export function createExpoNotificationAdapter(): NotificationAdapter {
         await mod.setNotificationChannelAsync(CARENTA_ALERT_CHANNEL_ID, {
           name: 'Cảnh báo & Nhắc nhở CARENTA',
           importance: mod.AndroidImportance.HIGH,
+          ...(mod.AndroidNotificationVisibility
+            ? { lockscreenVisibility: mod.AndroidNotificationVisibility.PRIVATE }
+            : {}),
         });
       } catch {
         // Ignore channel setup failure on unsupported runtimes
@@ -302,7 +305,8 @@ function validateStoredPreferences(raw: unknown): ReminderPreferences {
     typeof obj.enabled !== 'boolean' ||
     typeof obj.eveningHour !== 'number' ||
     typeof obj.eveningMinute !== 'number' ||
-    typeof obj.overspendingAlertsEnabled !== 'boolean'
+    typeof obj.overspendingAlertsEnabled !== 'boolean' ||
+    (obj.hideAmountOnPush !== undefined && typeof obj.hideAmountOnPush !== 'boolean')
   ) {
     throw new ReminderStorageError(
       'STORAGE_READ_FAILED',
@@ -316,6 +320,7 @@ function validateStoredPreferences(raw: unknown): ReminderPreferences {
     eveningHour: clamped.eveningHour,
     eveningMinute: clamped.eveningMinute,
     overspendingAlertsEnabled: obj.overspendingAlertsEnabled,
+    hideAmountOnPush: obj.hideAmountOnPush ?? false,
   };
 }
 
@@ -364,6 +369,7 @@ export function createSecureReminderPreferencesStorage(
         eveningHour: clamped.eveningHour,
         eveningMinute: clamped.eveningMinute,
         overspendingAlertsEnabled: Boolean(prefs.overspendingAlertsEnabled),
+        hideAmountOnPush: Boolean(prefs.hideAmountOnPush),
       });
       try {
         await SecureStore.setItemAsync(key, serialized);

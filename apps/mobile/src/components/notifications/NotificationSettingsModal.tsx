@@ -24,6 +24,7 @@ export function NotificationSettingsModal() {
     closeSettingsModal,
     toggleNotifications,
     toggleOverspendingAlerts,
+    toggleHideAmountOnPush,
     updateEveningTime,
     openOsNotificationSettings,
     triggerLocalTestNotification,
@@ -162,6 +163,38 @@ export function NotificationSettingsModal() {
                   ]}
                 >
                   {preferences.overspendingAlertsEnabled ? 'Bật' : 'Tắt'}
+                </Text>
+              </View>
+            </Pressable>
+
+            {/* Lock-screen Privacy Toggle */}
+            <Pressable
+              accessibilityRole="switch"
+              accessibilityLabel="Ẩn số tiền trên thông báo đẩy"
+              accessibilityState={{ checked: preferences.hideAmountOnPush }}
+              onPress={() => void toggleHideAmountOnPush(!preferences.hideAmountOnPush)}
+              style={({ pressed }) => [styles.toggleRow, pressed && styles.pressed]}
+              testID="toggle-hide-amount-push-button"
+            >
+              <View style={styles.toggleCopy}>
+                <Text style={styles.toggleTitle}>Ẩn số tiền trên thông báo đẩy</Text>
+                <Text style={styles.toggleSubtitle}>
+                  Che số tiền cụ thể trên màn hình khóa; vẫn hiển thị đầy đủ khi mở ứng dụng
+                </Text>
+              </View>
+              <View
+                style={[
+                  styles.switchPill,
+                  preferences.hideAmountOnPush ? styles.switchPillOn : styles.switchPillOff,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.switchPillText,
+                    preferences.hideAmountOnPush ? styles.switchTextOn : styles.switchTextOff,
+                  ]}
+                >
+                  {preferences.hideAmountOnPush ? 'Đang ẩn' : 'Hiện'}
                 </Text>
               </View>
             </Pressable>

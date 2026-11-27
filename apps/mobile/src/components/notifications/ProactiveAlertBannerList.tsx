@@ -11,7 +11,7 @@ import { useOptionalNotifications } from '../../context/NotificationContext';
 import { formatReminderTime, ProactiveAlert } from '../../notifications/alertEngine';
 import { colors, type } from '../../theme';
 
-function AlertBannerCard({
+const AlertBannerCard = React.memo(function AlertBannerCard({
   alert,
   onPrimaryPress,
   onDismiss,
@@ -122,7 +122,7 @@ function AlertBannerCard({
       </View>
     </Animated.View>
   );
-}
+});
 
 export function ProactiveAlertBannerList() {
   const notifications = useOptionalNotifications();

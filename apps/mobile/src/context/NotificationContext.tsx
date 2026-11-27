@@ -8,6 +8,7 @@ import React, {
   useState,
 } from 'react';
 import { AppState } from 'react-native';
+import { useOptionalAuth } from '../auth/AuthContext';
 import {
   BudgetRecoveryPlan,
   buildBudgetRecoveryPlan,
@@ -17,11 +18,12 @@ import {
   evaluateOverspendingAlert,
   EVENING_CHECKIN_MESSAGE,
   EVENING_CHECKIN_TITLE,
-  formatOverspendingAlertMessage,
+  formatOverspendingPushBody,
   OVERSPENDING_ALERT_TITLE,
   ProactiveAlert,
   ProactiveAlertKind,
   ReminderPreferences,
+  ServerBudgetRecoveryInput,
 } from '../notifications/alertEngine';
 import {
   createExpoNotificationAdapter,
@@ -51,6 +53,7 @@ export interface NotificationContextType {
   settingsError: string | null;
   toggleNotifications: (nextEnabled: boolean) => Promise<boolean>;
   toggleOverspendingAlerts: (nextEnabled: boolean) => Promise<void>;
+  toggleHideAmountOnPush: (nextHidden: boolean) => Promise<void>;
   updateEveningTime: (hour: number, minute: number) => Promise<void>;
   dismissAlert: (alertId: string) => void;
   handleAlertPrimaryAction: (alert: ProactiveAlert) => void;
@@ -69,6 +72,7 @@ interface NotificationProviderProps {
   adapter?: NotificationAdapter;
   preferencesStorage?: ReminderPreferencesStorage;
   nowProvider?: () => Date;
+  serverBudgetSummary?: ServerBudgetRecoveryInput | null;
 }
 
 export function NotificationProvider({
@@ -76,7 +80,9 @@ export function NotificationProvider({
   adapter: providedAdapter,
   preferencesStorage: providedStorage,
   nowProvider = () => new Date(),
+  serverBudgetSummary,
 }: NotificationProviderProps) {
+  const auth = useOptionalAuth();
   const {
     selectedDate,
     dailyBudgetLimit,
@@ -107,6 +113,8 @@ export function NotificationProvider({
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState<boolean>(false);
   const [lastPushDispatch, setLastPushDispatch] = useState<PushDispatchRecord | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [fetchedServerBudgetSummary, setFetchedServerBudgetSummary] =
+    useState<ServerBudgetRecoveryInput | null>(null);
   const [, setClockTick] = useState<number>(0);
 
   const isMountedRef = useRef<boolean>(true);
@@ -278,6 +286,29 @@ export function NotificationProvider({
     [adapter]
   );
 
+  // Opportunistically synchronize recovery metrics with server /budget/summary when authenticated
+  useEffect(() => {
+    if (serverBudgetSummary !== undefined || auth?.status !== 'authenticated') {
+      return;
+    }
+
+    let cancelled = false;
+    void auth.apiClient
+      .getBudgetSummary({ today: selectedDate })
+      .then((res) => {
+        if (!cancelled && isMountedRef.current) {
+          setFetchedServerBudgetSummary(res.data);
+        }
+      })
+      .catch(() => {
+        // Keep deterministic local ledger fallback when offline or before backend sync
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [auth, selectedDate, serverBudgetSummary, transactions.length]);
+
   // Seed baseline overspent tracking for the viewed date so switching dates does not falsely trigger pushes
   useEffect(() => {
     if (lastOverspentByDateRef.current[selectedDate] === undefined) {
@@ -318,7 +349,10 @@ export function NotificationProvider({
 
     void dispatchLocalPush({
       title: txOverspendingAlert.title,
-      body: txOverspendingAlert.message,
+      body: formatOverspendingPushBody(
+        txOverspendingAlert.overspentAmount ?? 0,
+        preferences.hideAmountOnPush
+      ),
       data: {
         alertId: txOverspendingAlert.id,
         kind: 'overspending',
@@ -333,6 +367,7 @@ export function NotificationProvider({
     getSummaryForDate,
     permissionStatus,
     preferences.enabled,
+    preferences.hideAmountOnPush,
     preferences.overspendingAlertsEnabled,
     transactions,
   ]);
@@ -515,6 +550,18 @@ export function NotificationProvider({
     [persistPreferences, preferences]
   );
 
+  const toggleHideAmountOnPush = useCallback(
+    async (nextHidden: boolean) => {
+      const nextPrefs: ReminderPreferences = {
+        ...preferences,
+        hideAmountOnPush: nextHidden,
+      };
+      setPreferences(nextPrefs);
+      await persistPreferences(nextPrefs);
+    },
+    [persistPreferences, preferences]
+  );
+
   const updateEveningTime = useCallback(
     async (hour: number, minute: number) => {
       const clamped = clampReminderTime(hour, minute);
@@ -572,7 +619,7 @@ export function NotificationProvider({
         const sampleAmount = overspendingAlert?.overspentAmount ?? 45000;
         return dispatchLocalPush({
           title: OVERSPENDING_ALERT_TITLE,
-          body: formatOverspendingAlertMessage(sampleAmount),
+          body: formatOverspendingPushBody(sampleAmount, preferences.hideAmountOnPush),
           data: {
             alertId: `overspending:${selectedDate}:${sampleAmount}`,
             kind: 'overspending',
@@ -598,16 +645,33 @@ export function NotificationProvider({
       overspendingAlert?.overspentAmount,
       permissionStatus,
       preferences.enabled,
+      preferences.hideAmountOnPush,
       selectedDate,
     ]
   );
+
+  const resolvedServerSummary =
+    serverBudgetSummary !== undefined ? serverBudgetSummary : fetchedServerBudgetSummary;
 
   const recoveryPlan = useMemo(() => {
     if (!isRecoveryModalOpen) {
       return null;
     }
-    return buildBudgetRecoveryPlan(getSummaryForDate(recoveryDate), dailyBudgetLimit);
-  }, [dailyBudgetLimit, getSummaryForDate, isRecoveryModalOpen, recoveryDate]);
+    return buildBudgetRecoveryPlan(
+      getSummaryForDate(recoveryDate),
+      dailyBudgetLimit,
+      recoveryDate === selectedDate && resolvedServerSummary
+        ? resolvedServerSummary
+        : undefined
+    );
+  }, [
+    dailyBudgetLimit,
+    getSummaryForDate,
+    isRecoveryModalOpen,
+    recoveryDate,
+    resolvedServerSummary,
+    selectedDate,
+  ]);
 
   const value = useMemo<NotificationContextType>(
     () => ({
@@ -621,6 +685,7 @@ export function NotificationProvider({
       settingsError,
       toggleNotifications,
       toggleOverspendingAlerts,
+      toggleHideAmountOnPush,
       updateEveningTime,
       dismissAlert,
       handleAlertPrimaryAction,
@@ -647,6 +712,7 @@ export function NotificationProvider({
       preferences,
       recoveryPlan,
       settingsError,
+      toggleHideAmountOnPush,
       toggleNotifications,
       toggleOverspendingAlerts,
       triggerLocalTestNotification,
