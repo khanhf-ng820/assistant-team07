@@ -1,3 +1,4 @@
+import * as SecureStore from 'expo-secure-store';
 import { Linking, Platform } from 'react-native';
 import {
   clampReminderTime,
@@ -99,17 +100,9 @@ export function normalizeNotificationPermission(
   };
 }
 
-function loadExpoNotificationsModule(): typeof import('expo-notifications') | null {
+async function loadExpoNotificationsModule(): Promise<typeof import('expo-notifications') | null> {
   try {
-    return require('expo-notifications') as typeof import('expo-notifications');
-  } catch {
-    return null;
-  }
-}
-
-function loadSecureStoreModule(): typeof import('expo-secure-store') | null {
-  try {
-    return require('expo-secure-store') as typeof import('expo-secure-store');
+    return await import('expo-notifications');
   } catch {
     return null;
   }
@@ -141,7 +134,7 @@ function ensureForegroundNotificationHandler(
 export function createExpoNotificationAdapter(): NotificationAdapter {
   return {
     async getPermissions() {
-      const mod = loadExpoNotificationsModule();
+      const mod = await loadExpoNotificationsModule();
       if (!mod?.getPermissionsAsync) {
         return { outcome: 'unavailable', canAskAgain: false };
       }
@@ -154,7 +147,7 @@ export function createExpoNotificationAdapter(): NotificationAdapter {
     },
 
     async requestPermissions() {
-      const mod = loadExpoNotificationsModule();
+      const mod = await loadExpoNotificationsModule();
       if (!mod?.requestPermissionsAsync) {
         return { outcome: 'unavailable', canAskAgain: false };
       }
@@ -176,7 +169,7 @@ export function createExpoNotificationAdapter(): NotificationAdapter {
       if (Platform.OS !== 'android') {
         return;
       }
-      const mod = loadExpoNotificationsModule();
+      const mod = await loadExpoNotificationsModule();
       if (!mod?.setNotificationChannelAsync) {
         return;
       }
@@ -191,7 +184,7 @@ export function createExpoNotificationAdapter(): NotificationAdapter {
     },
 
     async presentLocalNotification(payload) {
-      const mod = loadExpoNotificationsModule();
+      const mod = await loadExpoNotificationsModule();
       if (!mod?.scheduleNotificationAsync) {
         return null;
       }
@@ -212,7 +205,7 @@ export function createExpoNotificationAdapter(): NotificationAdapter {
     },
 
     async scheduleDailyCheckInReminder(hour, minute) {
-      const mod = loadExpoNotificationsModule();
+      const mod = await loadExpoNotificationsModule();
       if (!mod?.scheduleNotificationAsync || !mod?.SchedulableTriggerInputTypes) {
         return null;
       }
@@ -246,7 +239,7 @@ export function createExpoNotificationAdapter(): NotificationAdapter {
       if (!identifier) {
         return;
       }
-      const mod = loadExpoNotificationsModule();
+      const mod = await loadExpoNotificationsModule();
       if (!mod?.cancelScheduledNotificationAsync) {
         return;
       }
@@ -258,20 +251,25 @@ export function createExpoNotificationAdapter(): NotificationAdapter {
     },
 
     subscribeNotificationResponse(listener) {
-      const mod = loadExpoNotificationsModule();
-      if (!mod?.addNotificationResponseReceivedListener) {
-        return () => {};
-      }
-      const subscription = mod.addNotificationResponseReceivedListener((response) => {
-        const rawData = response?.notification?.request?.content?.data as
-          | Record<string, unknown>
-          | undefined;
-        const actionTarget = parseNotificationActionTarget(rawData?.actionTarget);
-        const alertId = typeof rawData?.alertId === 'string' ? rawData.alertId : undefined;
-        listener({ actionTarget, alertId });
+      let disposed = false;
+      let subscription: { remove?: () => void } | null = null;
+
+      void loadExpoNotificationsModule().then((mod) => {
+        if (disposed || !mod?.addNotificationResponseReceivedListener) {
+          return;
+        }
+        subscription = mod.addNotificationResponseReceivedListener((response) => {
+          const rawData = response?.notification?.request?.content?.data as
+            | Record<string, unknown>
+            | undefined;
+          const actionTarget = parseNotificationActionTarget(rawData?.actionTarget);
+          const alertId = typeof rawData?.alertId === 'string' ? rawData.alertId : undefined;
+          listener({ actionTarget, alertId });
+        });
       });
 
       return () => {
+        disposed = true;
         try {
           subscription?.remove?.();
         } catch {
@@ -330,18 +328,9 @@ export function createSecureReminderPreferencesStorage(
 ): ReminderPreferencesStorage {
   return {
     async load() {
-      const store = loadSecureStoreModule();
-      if (!store?.getItemAsync) {
-        throw new ReminderStorageError(
-          'STORAGE_READ_FAILED',
-          'SecureStore module unavailable',
-          'Bộ nhớ bảo mật hiện không khả dụng.'
-        );
-      }
-
       let rawJson: string | null;
       try {
-        rawJson = await store.getItemAsync(key);
+        rawJson = await SecureStore.getItemAsync(key);
       } catch (err) {
         throw new ReminderStorageError(
           'STORAGE_READ_FAILED',
@@ -369,14 +358,6 @@ export function createSecureReminderPreferencesStorage(
     },
 
     async save(prefs) {
-      const store = loadSecureStoreModule();
-      if (!store?.setItemAsync) {
-        throw new ReminderStorageError(
-          'STORAGE_WRITE_FAILED',
-          'SecureStore module unavailable',
-          'Không thể lưu cài đặt nhắc nhở.'
-        );
-      }
       const clamped = clampReminderTime(prefs.eveningHour, prefs.eveningMinute);
       const serialized = JSON.stringify({
         enabled: Boolean(prefs.enabled),
@@ -385,7 +366,7 @@ export function createSecureReminderPreferencesStorage(
         overspendingAlertsEnabled: Boolean(prefs.overspendingAlertsEnabled),
       });
       try {
-        await store.setItemAsync(key, serialized);
+        await SecureStore.setItemAsync(key, serialized);
       } catch (err) {
         throw new ReminderStorageError(
           'STORAGE_WRITE_FAILED',

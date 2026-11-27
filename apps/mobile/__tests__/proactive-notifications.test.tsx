@@ -360,4 +360,88 @@ describe('Phase 3 proactive push notifications & overspending alert UI', () => {
     await fireEvent.press(screen.getByTestId('alert-dismiss-overspending'));
     expect(screen.queryByTestId('alert-banner-overspending')).toBeNull();
   });
+
+  it('re-evaluates evening check-in threshold when returning to foreground', async () => {
+    let appStateHandler: ((state: AppStateStatus) => void) | undefined;
+    const appStateSpy = jest
+      .spyOn(AppState, 'addEventListener')
+      .mockImplementation((_type, listener) => {
+        appStateHandler = listener;
+        return { remove: jest.fn() };
+      });
+
+    let currentMockTime = new Date(2024, 6, 16, 19, 55);
+    const { adapter } = createMockAdapter();
+
+    await render(<TestApp adapter={adapter} nowProvider={() => currentMockTime} />);
+    await fireEvent.press(screen.getByTestId('select-empty-day-16'));
+
+    expect(screen.queryByTestId('alert-banner-evening_checkin')).toBeNull();
+
+    // Advance wall-clock past 20:00 and resume app to foreground
+    currentMockTime = new Date(2024, 6, 16, 20, 5);
+    await act(async () => {
+      appStateHandler?.('active');
+    });
+
+    expect(await screen.findByTestId('alert-banner-evening_checkin')).toBeVisible();
+    appStateSpy.mockRestore();
+  });
+
+  it('dispatches overspending push for cross-date confirmed transaction even while viewing another day', async () => {
+    const { adapter } = createMockAdapter();
+    const storage = createMemoryStorage({
+      enabled: true,
+      eveningHour: 20,
+      eveningMinute: 0,
+      overspendingAlertsEnabled: true,
+    });
+
+    await render(<TestApp adapter={adapter} storage={storage} />);
+
+    // Keep selectedDate on Day 10 while adding an overspending transaction for Day 9
+    await fireEvent.press(screen.getByTestId('log-overspending-on-day-9'));
+
+    await waitFor(() => {
+      expect(adapter.presentLocalNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: 'Cảnh cáo vung tay quá trớn: Hôm nay bạn đã vượt hạn mức 45.000đ!',
+          data: expect.objectContaining({
+            kind: 'overspending',
+            date: '2024-07-09',
+          }),
+        })
+      );
+    });
+  });
+
+  it('surfaces Vietnamese feedback on denied permission and guards concurrent toggle taps', async () => {
+    let resolvePrompt!: (res: { outcome: 'denied'; canAskAgain: boolean }) => void;
+    const requestPermissions = jest.fn(
+      () =>
+        new Promise<{ outcome: 'denied'; canAskAgain: boolean }>((resolve) => {
+          resolvePrompt = resolve;
+        })
+    );
+    const { adapter } = createMockAdapter({
+      getPermissions: jest.fn(async () => ({ outcome: 'denied' as const, canAskAgain: true })),
+      requestPermissions,
+    });
+
+    await render(<TestApp adapter={adapter} />);
+    await fireEvent.press(screen.getByTestId('open-notification-settings-button'));
+
+    // Rapid double-tap should trigger only a single OS permission request
+    await fireEvent.press(screen.getByTestId('toggle-notifications-button'));
+    await fireEvent.press(screen.getByTestId('toggle-notifications-button'));
+    expect(requestPermissions).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolvePrompt({ outcome: 'denied', canAskAgain: true });
+    });
+
+    expect(await screen.findByTestId('notification-settings-error')).toHaveTextContent(
+      /Bạn chưa cấp quyền thông báo/
+    );
+  });
 });

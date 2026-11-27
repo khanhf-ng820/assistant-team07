@@ -80,6 +80,7 @@ export function NotificationProvider({
   const {
     selectedDate,
     dailyBudgetLimit,
+    transactions,
     getSummaryForDate,
     openManualEntry,
     closeDaySheet,
@@ -106,13 +107,16 @@ export function NotificationProvider({
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState<boolean>(false);
   const [lastPushDispatch, setLastPushDispatch] = useState<PushDispatchRecord | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [, setClockTick] = useState<number>(0);
 
   const isMountedRef = useRef<boolean>(true);
   const scheduledDailyIdRef = useRef<string | null>(null);
   const eveningCheckInNotificationByDateRef = useRef<Record<string, string>>({});
   const dispatchedEveningDatesRef = useRef<Record<string, true>>({});
   const lastOverspentByDateRef = useRef<Record<string, number>>({});
+  const lastSeenTxIdRef = useRef<string | null>(transactions[0]?.id ?? null);
   const awaitingSettingsReturnRef = useRef<boolean>(false);
+  const togglingRef = useRef<boolean>(false);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -179,10 +183,16 @@ export function NotificationProvider({
     };
   }, [adapter, storage, syncDailySchedule]);
 
-  // Re-check notification permission when returning from OS settings
+  // Refresh time evaluation and re-check OS permission when returning to foreground
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
-      if (nextState !== 'active' || !awaitingSettingsReturnRef.current) {
+      if (nextState !== 'active') {
+        return;
+      }
+
+      setClockTick((prev) => prev + 1);
+
+      if (!awaitingSettingsReturnRef.current) {
         return;
       }
       awaitingSettingsReturnRef.current = false;
@@ -192,8 +202,11 @@ export function NotificationProvider({
           return;
         }
         setPermissionStatus(perm.outcome);
-        if (perm.outcome === 'granted' && preferences.enabled) {
-          await syncDailySchedule(preferences, perm.outcome);
+        if (perm.outcome === 'granted') {
+          setSettingsError(null);
+          if (preferences.enabled) {
+            await syncDailySchedule(preferences, perm.outcome);
+          }
         }
       });
     });
@@ -265,46 +278,63 @@ export function NotificationProvider({
     [adapter]
   );
 
-  // Trigger overspending local push when confirmed spending increases past daily limit
+  // Seed baseline overspent tracking for the viewed date so switching dates does not falsely trigger pushes
   useEffect(() => {
-    const currentOverspent = overspendingAlert?.overspentAmount ?? 0;
-    const previousOverspent = lastOverspentByDateRef.current[selectedDate];
-    lastOverspentByDateRef.current[selectedDate] = currentOverspent;
+    if (lastOverspentByDateRef.current[selectedDate] === undefined) {
+      lastOverspentByDateRef.current[selectedDate] = overspendingAlert?.overspentAmount ?? 0;
+    }
+  }, [overspendingAlert, selectedDate]);
 
-    // Only dispatch local push after an observed ledger increase (avoid firing on initial mount)
-    if (
-      previousOverspent === undefined ||
-      currentOverspent <= previousOverspent ||
-      !overspendingAlert
-    ) {
+  // Evaluate overspending push & cancel same-day evening reminder for every confirmed transaction (including cross-date)
+  useEffect(() => {
+    const latestTx = transactions[0];
+    if (!latestTx || latestTx.id === lastSeenTxIdRef.current) {
       return;
     }
+    lastSeenTxIdRef.current = latestTx.id;
+
+    const existingEveningId = eveningCheckInNotificationByDateRef.current[latestTx.date];
+    if (existingEveningId) {
+      delete eveningCheckInNotificationByDateRef.current[latestTx.date];
+      void adapter.cancelScheduledNotification(existingEveningId);
+    }
+
+    const txSummary = getSummaryForDate(latestTx.date);
+    const txOverspendingAlert = preferences.overspendingAlertsEnabled
+      ? evaluateOverspendingAlert(txSummary, dailyBudgetLimit)
+      : null;
+    const prevOverspent = lastOverspentByDateRef.current[latestTx.date] ?? 0;
+    const nextOverspent = txOverspendingAlert?.overspentAmount ?? 0;
+    lastOverspentByDateRef.current[latestTx.date] = nextOverspent;
 
     if (
+      !txOverspendingAlert ||
+      nextOverspent <= prevOverspent ||
       !preferences.enabled ||
-      !preferences.overspendingAlertsEnabled ||
       permissionStatus !== 'granted'
     ) {
       return;
     }
 
     void dispatchLocalPush({
-      title: overspendingAlert.title,
-      body: overspendingAlert.message,
+      title: txOverspendingAlert.title,
+      body: txOverspendingAlert.message,
       data: {
-        alertId: overspendingAlert.id,
+        alertId: txOverspendingAlert.id,
         kind: 'overspending',
         actionTarget: 'open_budget_recovery',
-        date: overspendingAlert.date,
+        date: txOverspendingAlert.date,
       },
     });
   }, [
+    adapter,
+    dailyBudgetLimit,
     dispatchLocalPush,
-    overspendingAlert,
+    getSummaryForDate,
     permissionStatus,
     preferences.enabled,
     preferences.overspendingAlertsEnabled,
-    selectedDate,
+    transactions,
   ]);
 
   // Trigger or cancel same-day evening check-in notification based on live confirmed expenses
@@ -426,33 +456,49 @@ export function NotificationProvider({
 
   const toggleNotifications = useCallback(
     async (nextEnabled: boolean): Promise<boolean> => {
+      if (togglingRef.current) {
+        return preferences.enabled;
+      }
+      togglingRef.current = true;
       setSettingsError(null);
-      if (!nextEnabled) {
-        const nextPrefs: ReminderPreferences = { ...preferences, enabled: false };
-        setPreferences(nextPrefs);
-        await syncDailySchedule(nextPrefs, permissionStatus);
-        await persistPreferences(nextPrefs);
-        return false;
-      }
 
-      const perm = await adapter.requestPermissions();
-      if (!isMountedRef.current) {
-        return false;
-      }
-      setPermissionStatus(perm.outcome);
+      try {
+        if (!nextEnabled) {
+          const nextPrefs: ReminderPreferences = { ...preferences, enabled: false };
+          setPreferences(nextPrefs);
+          await syncDailySchedule(nextPrefs, permissionStatus);
+          await persistPreferences(nextPrefs);
+          return false;
+        }
 
-      if (perm.outcome !== 'granted') {
-        const disabledPrefs: ReminderPreferences = { ...preferences, enabled: false };
-        setPreferences(disabledPrefs);
-        await persistPreferences(disabledPrefs);
-        return false;
-      }
+        const perm = await adapter.requestPermissions();
+        if (!isMountedRef.current) {
+          return false;
+        }
+        setPermissionStatus(perm.outcome);
 
-      const enabledPrefs: ReminderPreferences = { ...preferences, enabled: true };
-      setPreferences(enabledPrefs);
-      await syncDailySchedule(enabledPrefs, perm.outcome);
-      await persistPreferences(enabledPrefs);
-      return true;
+        if (perm.outcome !== 'granted') {
+          const disabledPrefs: ReminderPreferences = { ...preferences, enabled: false };
+          setPreferences(disabledPrefs);
+          await persistPreferences(disabledPrefs);
+          setSettingsError(
+            perm.outcome === 'blocked'
+              ? 'Quyền thông báo đang bị chặn. Vui lòng mở Cài đặt hệ thống để bật lại.'
+              : perm.outcome === 'unavailable'
+                ? 'Thiết bị hoặc môi trường hiện tại chưa hỗ trợ thông báo cục bộ.'
+                : 'Bạn chưa cấp quyền thông báo. Vui lòng thử lại để nhận nhắc nhở.'
+          );
+          return false;
+        }
+
+        const enabledPrefs: ReminderPreferences = { ...preferences, enabled: true };
+        setPreferences(enabledPrefs);
+        await syncDailySchedule(enabledPrefs, perm.outcome);
+        await persistPreferences(enabledPrefs);
+        return true;
+      } finally {
+        togglingRef.current = false;
+      }
     },
     [adapter, permissionStatus, persistPreferences, preferences, syncDailySchedule]
   );
