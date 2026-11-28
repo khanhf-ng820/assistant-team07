@@ -32,6 +32,14 @@ from app.schemas import (
     TransactionListResponse,
     TransactionResponse,
 )
+from app.voice_capture import (
+    VoiceCaptureDraft,
+    VoiceCaptureRequest,
+    VoiceCaptureService,
+    VoiceParserProtocol,
+    VoiceQuotaTracker,
+    VoiceStorageHook,
+)
 
 
 class HealthResponse(BaseModel):
@@ -52,8 +60,10 @@ class GoalAllocationRequest(BaseModel):
 def create_router(
     get_current_identity: Callable[..., AuthIdentity],
     repo: InMemoryRepository,
+    voice_service: VoiceCaptureService | None = None,
 ) -> APIRouter:
     router = APIRouter()
+    active_voice_service = voice_service or VoiceCaptureService()
 
     # --- Transactions ---
 
@@ -180,6 +190,18 @@ def create_router(
             raise HTTPException(status_code=404, detail="No active goal to allocate savings to")
         return goal
 
+    # --- Voice Capture ---
+
+    @router.post("/capture/voice", response_model=VoiceCaptureDraft)
+    async def capture_voice(
+        payload: VoiceCaptureRequest,
+        identity: AuthIdentity = Depends(get_current_identity),
+    ) -> VoiceCaptureDraft:
+        return await active_voice_service.process_capture(
+            user_id=identity.user_id,
+            payload=payload,
+        )
+
     return router
 
 
@@ -187,6 +209,9 @@ def create_app(
     auth_config: AuthConfig | None = None,
     token_verifier: TokenVerifier | None = None,
     repository: InMemoryRepository | None = None,
+    voice_parser: VoiceParserProtocol | None = None,
+    voice_quota_tracker: VoiceQuotaTracker | None = None,
+    voice_storage_hook: VoiceStorageHook | None = None,
 ) -> FastAPI:
     application = FastAPI(
         title="CARENTA Financial API",
@@ -200,6 +225,11 @@ def create_app(
         resolved_config, verifier=token_verifier
     )
     active_repo = default_repository if repository is None else repository
+    active_voice_service = VoiceCaptureService(
+        parser=voice_parser,
+        quota_tracker=voice_quota_tracker,
+        storage_hook=voice_storage_hook,
+    )
 
     @application.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
@@ -214,11 +244,32 @@ def create_app(
         return identity
 
     # Mount v1 routers at both /api/v1 and /v1 for full interoperability
-    api_v1_router = create_router(get_current_identity, active_repo)
+    api_v1_router = create_router(
+        get_current_identity,
+        active_repo,
+        voice_service=active_voice_service,
+    )
     application.include_router(auth_router, prefix="/api/v1", tags=["auth"])
     application.include_router(auth_router, prefix="/v1", tags=["auth"])
     application.include_router(api_v1_router, prefix="/api/v1", tags=["API v1"])
     application.include_router(api_v1_router, prefix="/v1", tags=["v1"])
+
+    async def capture_voice_alias(
+        payload: VoiceCaptureRequest,
+        identity: AuthIdentity = Depends(get_current_identity),
+    ) -> VoiceCaptureDraft:
+        return await active_voice_service.process_capture(
+            user_id=identity.user_id,
+            payload=payload,
+        )
+
+    application.add_api_route(
+        "/v1/captures/voice",
+        capture_voice_alias,
+        methods=["POST"],
+        response_model=VoiceCaptureDraft,
+        tags=["v1"],
+    )
 
     return application
 
