@@ -1,3 +1,4 @@
+import { CATEGORIES, type CategoryId } from '../types/transaction';
 import { ApiError } from './errors';
 
 export interface HealthResponse {
@@ -116,14 +117,7 @@ export interface BudgetConfigResponse {
   message: string;
 }
 
-export type VoiceCaptureCategory =
-  | 'food'
-  | 'transport'
-  | 'shopping'
-  | 'bills'
-  | 'education'
-  | 'entertainment'
-  | 'other';
+export type VoiceCaptureCategory = CategoryId;
 
 export interface VoiceCaptureRequest {
   audio_base64: string;
@@ -318,15 +312,7 @@ export function parseBudgetConfigResponse(body: unknown): BudgetConfigResponse {
   };
 }
 
-const VALID_VOICE_CATEGORIES: readonly VoiceCaptureCategory[] = [
-  'food',
-  'transport',
-  'shopping',
-  'bills',
-  'education',
-  'entertainment',
-  'other',
-];
+const VALID_VOICE_CATEGORIES = new Set<string>(Object.keys(CATEGORIES));
 
 const MAX_VND_AMOUNT = 1_000_000_000_000;
 
@@ -353,7 +339,7 @@ export function parseVoiceCaptureDraft(body: unknown): VoiceCaptureDraft {
   let category: VoiceCaptureCategory | null = null;
   if (obj.category !== null && obj.category !== undefined) {
     const rawCat = asString(obj, 'category', 'VoiceCaptureDraft');
-    if (!VALID_VOICE_CATEGORIES.includes(rawCat as VoiceCaptureCategory)) {
+    if (!VALID_VOICE_CATEGORIES.has(rawCat)) {
       unexpected('Expected valid VoiceCaptureDraft.category');
     }
     category = rawCat as VoiceCaptureCategory;

@@ -6,7 +6,6 @@ import asyncio
 import base64
 import datetime as dt
 import json
-import struct
 from typing import Any
 
 import pytest
@@ -21,6 +20,7 @@ from app.main import create_app
 from app.settings import GeminiSettings
 from app.voice_capture import VoiceCaptureDraft, VoiceParserProtocol
 from app.voice_gemini import GeminiVoiceParser, build_gemini_client
+from tests.voice_test_helpers import make_m4a_bytes
 
 
 def _make_response(
@@ -400,17 +400,6 @@ def test_gemini_voice_parser_maps_malformed_json_to_502_without_leaking_payload(
     assert "AIza-secret" not in exc_info.value.message
 
 
-def _make_valid_m4a_bytes() -> bytes:
-    def box(box_type: bytes, payload: bytes) -> bytes:
-        return struct.pack(">I", 8 + len(payload)) + box_type + payload
-
-    ftyp = box(b"ftyp", b"M4A \x00\x00\x00\x00M4A ")
-    mvhd_payload = struct.pack(">IIIIII", 0, 0, 0, 1000, 3000, 0x00010000) + b"\x00" * 76
-    moov = box(b"moov", box(b"mvhd", mvhd_payload))
-    mdat = box(b"mdat", b"\x11\x22\x33\x44")
-    return ftyp + moov + mdat
-
-
 def test_fastapi_lifespan_binds_gemini_parser_and_closes_client_on_shutdown(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -440,7 +429,7 @@ def test_fastapi_lifespan_binds_gemini_parser_and_closes_client_on_shutdown(
     assert factory_calls == []
 
     payload = {
-        "audio_base64": base64.b64encode(_make_valid_m4a_bytes()).decode("ascii"),
+        "audio_base64": base64.b64encode(make_m4a_bytes(duration=3000)).decode("ascii"),
         "mime_type": "audio/m4a",
         "duration_ms": 3000,
     }
@@ -474,7 +463,7 @@ def test_fastapi_lifespan_starts_cleanly_without_gemini_key_and_fails_closed(
 
     app = create_app(auth_config=AuthConfig(local_dev_auth=True))
     payload = {
-        "audio_base64": base64.b64encode(_make_valid_m4a_bytes()).decode("ascii"),
+        "audio_base64": base64.b64encode(make_m4a_bytes(duration=3000)).decode("ascii"),
         "mime_type": "audio/m4a",
     }
     with TestClient(app) as client:
@@ -502,7 +491,7 @@ def test_fastapi_lifespan_skips_gemini_client_when_voice_parser_injected(
         voice_parser=_StubParser(),
     )
     payload = {
-        "audio_base64": base64.b64encode(_make_valid_m4a_bytes()).decode("ascii"),
+        "audio_base64": base64.b64encode(make_m4a_bytes(duration=3000)).decode("ascii"),
         "mime_type": "audio/m4a",
     }
     with TestClient(app) as client:

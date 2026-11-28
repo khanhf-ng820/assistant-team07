@@ -61,6 +61,22 @@ class GoalAllocationRequest(BaseModel):
     amount: int = Field(gt=0, description="Amount in integer VND to allocate into savings")
 
 
+def _make_voice_capture_handler(
+    get_current_identity: Callable[..., AuthIdentity],
+    voice_service: VoiceCaptureService,
+):
+    async def capture_voice(
+        payload: VoiceCaptureRequest,
+        identity: AuthIdentity = Depends(get_current_identity),
+    ) -> VoiceCaptureDraft:
+        return await voice_service.process_capture(
+            user_id=identity.user_id,
+            payload=payload,
+        )
+
+    return capture_voice
+
+
 def create_router(
     get_current_identity: Callable[..., AuthIdentity],
     repo: InMemoryRepository,
@@ -196,15 +212,12 @@ def create_router(
 
     # --- Voice Capture ---
 
-    @router.post("/capture/voice", response_model=VoiceCaptureDraft)
-    async def capture_voice(
-        payload: VoiceCaptureRequest,
-        identity: AuthIdentity = Depends(get_current_identity),
-    ) -> VoiceCaptureDraft:
-        return await active_voice_service.process_capture(
-            user_id=identity.user_id,
-            payload=payload,
-        )
+    router.add_api_route(
+        "/capture/voice",
+        _make_voice_capture_handler(get_current_identity, active_voice_service),
+        methods=["POST"],
+        response_model=VoiceCaptureDraft,
+    )
 
     return router
 
@@ -283,18 +296,9 @@ def create_app(
     application.include_router(api_v1_router, prefix="/api/v1", tags=["API v1"])
     application.include_router(api_v1_router, prefix="/v1", tags=["v1"])
 
-    async def capture_voice_alias(
-        payload: VoiceCaptureRequest,
-        identity: AuthIdentity = Depends(get_current_identity),
-    ) -> VoiceCaptureDraft:
-        return await active_voice_service.process_capture(
-            user_id=identity.user_id,
-            payload=payload,
-        )
-
     application.add_api_route(
         "/v1/captures/voice",
-        capture_voice_alias,
+        _make_voice_capture_handler(get_current_identity, active_voice_service),
         methods=["POST"],
         response_model=VoiceCaptureDraft,
         tags=["v1"],

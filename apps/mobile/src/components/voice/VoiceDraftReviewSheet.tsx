@@ -23,7 +23,7 @@ const UNCERTAIN_FIELD_LABELS: Record<string, string> = {
   recognized_text: 'Nội dung giọng nói',
 };
 
-function hasValidConfirmableDraft(draft: VoiceDraftLike): boolean {
+export function hasValidConfirmableDraft(draft: VoiceDraftLike): boolean {
   return (
     draft.amount !== null &&
     Number.isSafeInteger(draft.amount) &&
