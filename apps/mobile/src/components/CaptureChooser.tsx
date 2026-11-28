@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLedger } from '../context/LedgerContext';
+import { useOptionalVoiceCapture } from '../context/VoiceCaptureContext';
 import { Button } from './Button';
 import { colors, radius, shadows, spacing, typography } from '../theme';
 
@@ -20,9 +21,10 @@ export interface CaptureChooserProps {
   onClose: () => void;
   onSelectManual?: () => void;
   onManualSelect?: () => void;
+  onSelectVoice?: () => void;
   /**
    * Observer/telemetry callback fired when any capture method is tapped.
-   * Runs alongside the active manual handler (`onSelectManual` or `LedgerContext.openManualEntry`).
+   * Runs alongside the active capture handler (`onSelectManual`, `onSelectVoice`, or context opener).
    */
   onSelectMethod?: (method: CaptureMethodId) => void;
 }
@@ -45,6 +47,7 @@ export function CaptureChooser({
   onClose,
   onSelectManual,
   onManualSelect,
+  onSelectVoice,
   onSelectMethod,
 }: CaptureChooserProps) {
   let openManualEntryFromContext: (() => void) | undefined;
@@ -56,8 +59,12 @@ export function CaptureChooser({
     // Graceful fallback when rendered in isolated test environments
   }
 
+  const voiceCapture = useOptionalVoiceCapture();
   const manualHandler = onSelectManual ?? onManualSelect ?? openManualEntryFromContext;
+  const voiceHandler = onSelectVoice ?? voiceCapture?.openVoiceCapture;
   const hasManualSupport = Boolean(manualHandler || onSelectMethod);
+  const hasVoiceSupport = Boolean(voiceHandler || onSelectMethod);
+  const hasAnySupport = hasManualSupport || hasVoiceSupport;
 
   return (
     <Modal
@@ -91,7 +98,7 @@ export function CaptureChooser({
                 Chọn cách ghi giao dịch
               </Text>
               <Text style={styles.body}>
-                {hasManualSupport
+                {hasAnySupport
                   ? 'Chọn phương thức để ghi nhận khoản chi tiêu mới.'
                   : 'Bản mẫu chưa hỗ trợ ghi giao dịch.'}
               </Text>
@@ -99,7 +106,9 @@ export function CaptureChooser({
 
             <View style={styles.optionsList}>
               {ACTION_OPTIONS.map(({ id, method, icon, description }) => {
-                const isEnabled = id === 'manual' && hasManualSupport;
+                const isEnabled =
+                  (id === 'manual' && hasManualSupport) ||
+                  (id === 'voice' && hasVoiceSupport);
                 const label = isEnabled ? method : `${method} — Chưa triển khai`;
 
                 return (
@@ -114,8 +123,11 @@ export function CaptureChooser({
                     onPress={() => {
                       if (!isEnabled) return;
                       onClose();
-                      // Trigger manual entry handler (prop override or LedgerContext.openManualEntry)
-                      manualHandler?.();
+                      if (id === 'manual') {
+                        manualHandler?.();
+                      } else if (id === 'voice') {
+                        voiceHandler?.();
+                      }
                       // Notify method selection observer if registered
                       onSelectMethod?.(id);
                     }}

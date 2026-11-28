@@ -1,3 +1,4 @@
+import { CATEGORIES, type CategoryId } from '../types/transaction';
 import { ApiError } from './errors';
 
 export interface HealthResponse {
@@ -115,6 +116,29 @@ export interface BudgetConfigResponse {
   status: string;
   message: string;
 }
+
+export type VoiceCaptureCategory = CategoryId;
+
+export interface VoiceCaptureRequest {
+  audio_base64: string;
+  mime_type: string;
+  duration_ms?: number | null;
+}
+
+export interface VoiceCaptureDraft {
+  amount: number | null;
+  currency: 'VND' | null;
+  category: VoiceCaptureCategory | null;
+  merchant: string | null;
+  description: string | null;
+  recognized_text: string | null;
+  occurred_on: string | null;
+  timestamp: string | null;
+  uncertain_fields: string[];
+  has_low_confidence: boolean;
+}
+
+export type VoiceDraftLike = VoiceCaptureDraft;
 
 function unexpected(message: string): never {
   throw new ApiError({
@@ -285,5 +309,62 @@ export function parseBudgetConfigResponse(body: unknown): BudgetConfigResponse {
   return {
     status: asString(obj, 'status', 'BudgetConfigResponse'),
     message: asString(obj, 'message', 'BudgetConfigResponse'),
+  };
+}
+
+const VALID_VOICE_CATEGORIES = new Set<string>(Object.keys(CATEGORIES));
+
+const MAX_VND_AMOUNT = 1_000_000_000_000;
+
+export function parseVoiceCaptureDraft(body: unknown): VoiceCaptureDraft {
+  const obj = asRecord(body, 'VoiceCaptureDraft');
+
+  let amount: number | null = null;
+  if (obj.amount !== null && obj.amount !== undefined) {
+    const val = asSafeInteger(obj, 'amount', 'VoiceCaptureDraft');
+    if (val < 1 || val > MAX_VND_AMOUNT) {
+      unexpected('Expected positive VND integer for VoiceCaptureDraft.amount');
+    }
+    amount = val;
+  }
+
+  let currency: 'VND' | null = null;
+  if (obj.currency !== null && obj.currency !== undefined) {
+    if (obj.currency !== 'VND') {
+      unexpected('Expected VND or null for VoiceCaptureDraft.currency');
+    }
+    currency = 'VND';
+  }
+
+  let category: VoiceCaptureCategory | null = null;
+  if (obj.category !== null && obj.category !== undefined) {
+    const rawCat = asString(obj, 'category', 'VoiceCaptureDraft');
+    if (!VALID_VOICE_CATEGORIES.has(rawCat)) {
+      unexpected('Expected valid VoiceCaptureDraft.category');
+    }
+    category = rawCat as VoiceCaptureCategory;
+  }
+
+  if (!Array.isArray(obj.uncertain_fields)) {
+    unexpected('Expected array VoiceCaptureDraft.uncertain_fields');
+  }
+  const uncertainFields = obj.uncertain_fields.map((item) => {
+    if (typeof item !== 'string') {
+      unexpected('Expected string elements in VoiceCaptureDraft.uncertain_fields');
+    }
+    return item;
+  });
+
+  return {
+    amount,
+    currency,
+    category,
+    merchant: asNullableString(obj, 'merchant', 'VoiceCaptureDraft') ?? null,
+    description: asNullableString(obj, 'description', 'VoiceCaptureDraft') ?? null,
+    recognized_text: asNullableString(obj, 'recognized_text', 'VoiceCaptureDraft') ?? null,
+    occurred_on: asNullableString(obj, 'occurred_on', 'VoiceCaptureDraft') ?? null,
+    timestamp: asNullableString(obj, 'timestamp', 'VoiceCaptureDraft') ?? null,
+    uncertain_fields: uncertainFields,
+    has_low_confidence: asBoolean(obj, 'has_low_confidence', 'VoiceCaptureDraft'),
   };
 }

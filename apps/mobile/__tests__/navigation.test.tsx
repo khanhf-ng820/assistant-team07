@@ -27,13 +27,12 @@ it.each(['Thống kê', 'Tiết kiệm'])('opens and closes the same chooser fro
   await fireEvent.press(screen.getByRole('tab', { name: tab }));
   await fireEvent.press(screen.getByRole('button', { name: 'Thêm giao dịch' }));
 
-  // Manual entry is activated in Phase 1 (Issue #45)
+  // Manual entry (Phase 1) and Voice capture (Slice 3 / #113) are enabled
   expect(screen.getByRole('button', { name: 'Nhập thủ công' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Ghi âm' })).toBeEnabled();
 
-  // OCR and Voice capture remain placeholders for Phase 2
-  for (const method of ['Quét hóa đơn', 'Ghi âm']) {
-    expect(screen.getByRole('button', { name: `${method} — Chưa triển khai` })).toBeDisabled();
-  }
+  // OCR capture remains a placeholder
+  expect(screen.getByRole('button', { name: 'Quét hóa đơn — Chưa triển khai' })).toBeDisabled();
 
   await fireEvent.press(screen.getByRole('button', { name: 'Đóng lựa chọn' }));
   expect(screen.queryByText('Chọn cách ghi giao dịch')).toBeNull();

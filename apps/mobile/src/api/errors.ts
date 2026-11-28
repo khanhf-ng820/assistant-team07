@@ -13,11 +13,22 @@ export type ApiErrorCode =
   | 'NOT_FOUND'
   | 'BAD_REQUEST'
   | 'CONFLICT'
+  | 'PAYLOAD_TOO_LARGE'
   | 'VALIDATION_ERROR'
   | 'RATE_LIMITED'
+  | 'GATEWAY_TIMEOUT'
   | 'INTERNAL_ERROR'
   | 'SERVER_ERROR'
   | 'HTTP_ERROR'
+  | 'VOICE_AUDIO_TOO_LARGE'
+  | 'VOICE_UNSUPPORTED_MEDIA_TYPE'
+  | 'VOICE_INVALID_AUDIO'
+  | 'VOICE_DURATION_EXCEEDED'
+  | 'VOICE_RATE_LIMITED'
+  | 'VOICE_PARSER_UNAVAILABLE'
+  | 'VOICE_PROVIDER_UNAVAILABLE'
+  | 'VOICE_PROVIDER_ERROR'
+  | 'VOICE_TIMEOUT'
   | 'STORAGE_READ_FAILED'
   | 'STORAGE_WRITE_FAILED'
   | 'STORAGE_CLEAR_FAILED';
@@ -75,10 +86,25 @@ const VIETNAMESE_CODE_MESSAGES: Record<string, string> = {
   NOT_FOUND: 'Không tìm thấy dữ liệu yêu cầu.',
   BAD_REQUEST: 'Yêu cầu không hợp lệ.',
   CONFLICT: 'Dữ liệu xung đột với trạng thái hiện tại.',
+  PAYLOAD_TOO_LARGE: 'Tệp âm thanh vượt quá giới hạn 2 MB.',
   VALIDATION_ERROR: 'Dữ liệu nhập chưa hợp lệ, vui lòng kiểm tra lại.',
   RATE_LIMITED: 'Bạn thao tác quá nhanh, vui lòng thử lại sau ít phút.',
+  GATEWAY_TIMEOUT: 'Xử lý yêu cầu quá thời gian, vui lòng thử lại.',
   INTERNAL_ERROR: 'Máy chủ đang gặp sự cố, vui lòng thử lại sau.',
   SERVER_ERROR: 'Máy chủ đang bận, vui lòng thử lại sau.',
+  VOICE_AUDIO_TOO_LARGE: 'Đoạn ghi âm vượt quá giới hạn 2 MB, vui lòng ghi ngắn hơn.',
+  VOICE_UNSUPPORTED_MEDIA_TYPE: 'Định dạng âm thanh không được hỗ trợ.',
+  VOICE_INVALID_AUDIO: 'Tệp ghi âm không hợp lệ hoặc bị hỏng, vui lòng thử lại.',
+  VOICE_DURATION_EXCEEDED: 'Đoạn ghi âm vượt quá giới hạn 30 giây.',
+  VOICE_RATE_LIMITED:
+    'Bạn đã dùng hết lượt ghi âm hôm nay, vui lòng thử lại vào ngày mai hoặc nhập tay.',
+  VOICE_PARSER_UNAVAILABLE:
+    'Dịch vụ nhận diện giọng nói tạm thời chưa sẵn sàng, vui lòng thử lại hoặc nhập tay.',
+  VOICE_PROVIDER_UNAVAILABLE:
+    'Dịch vụ nhận diện giọng nói tạm thời gián đoạn, vui lòng thử lại hoặc nhập tay.',
+  VOICE_PROVIDER_ERROR:
+    'Dịch vụ nhận diện giọng nói gặp sự cố, vui lòng thử lại hoặc nhập tay.',
+  VOICE_TIMEOUT: 'Xử lý giọng nói quá thời gian, vui lòng thử lại.',
   STORAGE_READ_FAILED: 'Không thể đọc phiên đăng nhập từ bộ nhớ bảo mật. Vui lòng thử lại.',
   STORAGE_WRITE_FAILED: 'Không thể lưu phiên đăng nhập vào bộ nhớ bảo mật. Vui lòng thử lại.',
   STORAGE_CLEAR_FAILED: 'Không thể xóa phiên đăng nhập khỏi bộ nhớ bảo mật. Vui lòng thử đăng xuất lại.',
@@ -111,8 +137,10 @@ function defaultCodeForStatus(status: number): ApiErrorCode {
   if (status === 403) return 'FORBIDDEN';
   if (status === 404) return 'NOT_FOUND';
   if (status === 409) return 'CONFLICT';
+  if (status === 413) return 'PAYLOAD_TOO_LARGE';
   if (status === 422) return 'VALIDATION_ERROR';
   if (status === 429) return 'RATE_LIMITED';
+  if (status === 504) return 'GATEWAY_TIMEOUT';
   if (status >= 500) return 'SERVER_ERROR';
   return 'HTTP_ERROR';
 }

@@ -1329,3 +1329,198 @@ describe('CarentaRuntime private (Student Identity, sessionEpoch) Offline Fallba
     await expect(inflightHealth).resolves.toEqual({ status: 'ok', service: 'carenta-api' });
   });
 });
+
+describe('CarentaRuntime parseVoiceCapture (#115)', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  const sampleVoiceDraft = {
+    amount: 35_000,
+    currency: 'VND',
+    category: 'food',
+    merchant: 'Cơm sườn',
+    description: 'Cơm sườn 35k',
+    recognized_text: 'Cơm sườn 35k',
+    occurred_on: '2026-11-28',
+    timestamp: null,
+    uncertain_fields: [],
+    has_low_confidence: false,
+  };
+
+  it('sends POST /api/v1/capture/voice with Bearer JWT and Local Dev Mode headers, enforces 25s timeout, and handles 401 refresh', async () => {
+    const authFetch = jest
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({ error: { code: 'AUTH_TOKEN_EXPIRED', message: 'Expired' } }, 401)
+      )
+      .mockResolvedValueOnce(jsonResponse(sampleVoiceDraft));
+
+    const storage = createMemorySessionStorage(makeSession({ accessToken: 'jwt-old' }));
+    const authGateway: AuthGateway = {
+      signInWithPassword: jest.fn(async () => makeSession({ accessToken: 'jwt-new' })),
+      refreshSession: jest.fn(async () => makeSession({ accessToken: 'jwt-refreshed' })),
+      signOut: jest.fn(async () => {}),
+    };
+
+    const authRuntime = createCarentaRuntime({
+      apiBaseUrl: 'http://192.168.1.10:8000',
+      authMode: { kind: 'authenticated', storage, authGateway },
+      httpTransport: createFetchTransport({ fetchImpl: authFetch as unknown as typeof fetch }),
+      now: () => 1_700_000_000_000,
+      generateRequestId: () => 'voice-req-1',
+    });
+    await authRuntime.restore();
+
+    const payload = {
+      audio_base64: 'AAAA',
+      mime_type: 'audio/m4a',
+      duration_ms: 2400,
+    };
+
+    await expect(authRuntime.apiClient.parseVoiceCapture(payload)).resolves.toEqual(sampleVoiceDraft);
+    expect(authGateway.refreshSession).toHaveBeenCalledTimes(1);
+    expect(authFetch).toHaveBeenCalledTimes(2);
+    expect(authFetch).toHaveBeenNthCalledWith(
+      1,
+      'http://192.168.1.10:8000/api/v1/capture/voice',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify(payload),
+        headers: expect.objectContaining({
+          Authorization: 'Bearer jwt-old',
+          'Content-Type': 'application/json',
+          'X-Request-ID': 'voice-req-1',
+        }),
+      })
+    );
+    expect(authFetch).toHaveBeenNthCalledWith(
+      2,
+      'http://192.168.1.10:8000/api/v1/capture/voice',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer jwt-refreshed',
+        }),
+      })
+    );
+
+    const localDevFetch = jest.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.headers).not.toEqual(
+        expect.objectContaining({ Authorization: expect.any(String) })
+      );
+      return jsonResponse(sampleVoiceDraft);
+    });
+    const localDevRuntime = createCarentaRuntime({
+      apiBaseUrl: 'http://192.168.1.10:8000',
+      authMode: { kind: 'local_dev' },
+      httpTransport: createFetchTransport({ fetchImpl: localDevFetch as unknown as typeof fetch }),
+    });
+
+    await expect(localDevRuntime.apiClient.parseVoiceCapture(payload)).resolves.toEqual(
+      sampleVoiceDraft
+    );
+    expect(localDevFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('never caches or queues voice audio under Offline Fallback, enforces 25s timeout, and surfaces 429/504/422/413', async () => {
+    jest.useFakeTimers();
+
+    const payload = { audio_base64: 'AAAA', mime_type: 'audio/m4a', duration_ms: 1200 };
+    let mode: 'ok' | 'offline' | '429' | '504' | '413' | '422' | 'hang' = 'ok';
+
+    const fetchMock = jest.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+      if (mode === 'offline') {
+        return Promise.reject(new TypeError('Network failed'));
+      }
+      if (mode === 'hang') {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new Error('Aborted')), {
+            once: true,
+          });
+        });
+      }
+      if (mode === '429') {
+        return Promise.resolve(
+          jsonResponse({ error: { code: 'VOICE_RATE_LIMITED', message: 'Quota' } }, 429)
+        );
+      }
+      if (mode === '504') {
+        return Promise.resolve(
+          jsonResponse({ error: { code: 'VOICE_TIMEOUT', message: 'Timeout' } }, 504)
+        );
+      }
+      if (mode === '413') {
+        return Promise.resolve(
+          jsonResponse({ error: { code: 'VOICE_AUDIO_TOO_LARGE', message: 'Large' } }, 413)
+        );
+      }
+      if (mode === '422') {
+        return Promise.resolve(
+          jsonResponse({ error: { code: 'VOICE_INVALID_AUDIO', message: 'Invalid' } }, 422)
+        );
+      }
+      return Promise.resolve(jsonResponse(sampleVoiceDraft));
+    });
+
+    const runtime = createCarentaRuntime({
+      apiBaseUrl: 'http://192.168.1.10:8000',
+      authMode: { kind: 'local_dev' },
+      httpTransport: createFetchTransport({ fetchImpl: fetchMock as unknown as typeof fetch }),
+    });
+
+    // Even after a successful parseVoiceCapture, subsequent offline errors never return cached draft
+    await expect(runtime.apiClient.parseVoiceCapture(payload)).resolves.toEqual(sampleVoiceDraft);
+
+    mode = 'offline';
+    await expect(runtime.apiClient.parseVoiceCapture(payload)).rejects.toMatchObject({
+      code: 'NETWORK_UNAVAILABLE',
+      retryable: true,
+    });
+
+    mode = '429';
+    await expect(runtime.apiClient.parseVoiceCapture(payload)).rejects.toMatchObject({
+      code: 'VOICE_RATE_LIMITED',
+      status: 429,
+    });
+
+    mode = '504';
+    await expect(runtime.apiClient.parseVoiceCapture(payload)).rejects.toMatchObject({
+      code: 'VOICE_TIMEOUT',
+      status: 504,
+    });
+
+    mode = '413';
+    await expect(runtime.apiClient.parseVoiceCapture(payload)).rejects.toMatchObject({
+      code: 'VOICE_AUDIO_TOO_LARGE',
+      status: 413,
+    });
+
+    mode = '422';
+    await expect(runtime.apiClient.parseVoiceCapture(payload)).rejects.toMatchObject({
+      code: 'VOICE_INVALID_AUDIO',
+      status: 422,
+    });
+
+    mode = 'hang';
+    const pending = runtime.apiClient.parseVoiceCapture(payload);
+    jest.advanceTimersByTime(24_999);
+    let settled = false;
+    void pending.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      }
+    );
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    jest.advanceTimersByTime(1);
+    await expect(pending).rejects.toMatchObject({
+      code: 'TIMEOUT',
+      retryable: true,
+    });
+  });
+});
