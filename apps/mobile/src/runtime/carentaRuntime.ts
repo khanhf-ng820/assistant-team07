@@ -8,6 +8,7 @@ import {
   type GoalCreate,
   type GoalResponse,
   type GoalUpdate,
+  type HabitSuggestionResponse,
   type HealthResponse,
   type TransactionCreate,
   type TransactionListQuery,
@@ -18,6 +19,7 @@ import {
   parseBudgetSummary,
   parseGoal,
   parseGoalList,
+  parseHabitSuggestion,
   parseHealthResponse,
   parseTransaction,
   parseTransactionList,
@@ -90,6 +92,9 @@ export interface CarentaApiClient {
     options?: RequestOptions
   ) => Promise<TransactionResponse>;
   getTransaction: (id: string, options?: RequestOptions) => Promise<TransactionResponse>;
+  getHabitSuggestion: (options?: RequestOptions) => Promise<HabitSuggestionResponse>;
+  confirmHabit: (id: string, options?: RequestOptions) => Promise<TransactionResponse>;
+  dismissHabit: (id: string, options?: RequestOptions) => Promise<HabitSuggestionResponse>;
   listGoals: (today?: string, options?: RequestOptions) => Promise<GoalResponse[]>;
   createGoal: (
     payload: GoalCreate,
@@ -868,6 +873,20 @@ export function createCarentaRuntime(options: CarentaRuntimeOptions): CarentaRun
       }),
     getTransaction: (id, reqOptions) =>
       requestJson(`/api/v1/transactions/${encodeURIComponent(id)}`, parseTransaction, {
+        signal: reqOptions?.signal,
+      }),
+    getHabitSuggestion: (reqOptions) =>
+      requestJson('/api/v1/habits/suggestion', parseHabitSuggestion, {
+        signal: reqOptions?.signal,
+      }),
+    confirmHabit: (id, reqOptions) =>
+      requestJson(`/api/v1/habits/${encodeURIComponent(id)}/confirm`, parseTransaction, {
+        method: 'POST',
+        signal: reqOptions?.signal,
+      }),
+    dismissHabit: (id, reqOptions) =>
+      requestJson(`/api/v1/habits/${encodeURIComponent(id)}/dismiss`, parseHabitSuggestion, {
+        method: 'POST',
         signal: reqOptions?.signal,
       }),
     listGoals: (today, reqOptions) =>

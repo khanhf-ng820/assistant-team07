@@ -116,6 +116,20 @@ export interface BudgetConfigResponse {
   message: string;
 }
 
+export interface HabitSuggestion {
+  id: string;
+  date: string;
+  amount: number;
+  category: string;
+  note: string;
+  confidence: number;
+  matching_days: number;
+}
+
+export interface HabitSuggestionResponse {
+  suggestion: HabitSuggestion | null;
+}
+
 function unexpected(message: string): never {
   throw new ApiError({
     code: 'UNEXPECTED_RESPONSE',
@@ -205,6 +219,33 @@ export function parseTransaction(body: unknown): TransactionResponse {
     note: asNullableString(obj, 'note', 'TransactionResponse'),
     idempotency_key: asString(obj, 'idempotency_key', 'TransactionResponse'),
     created_at: asString(obj, 'created_at', 'TransactionResponse'),
+  };
+}
+
+export function parseHabitSuggestion(body: unknown): HabitSuggestionResponse {
+  const { suggestion } = asRecord(body, 'HabitSuggestionResponse');
+  if (suggestion === null) return { suggestion };
+
+  const label = 'HabitSuggestion';
+  const obj = asRecord(suggestion, label);
+  const id = asString(obj, 'id', label);
+  const date = asString(obj, 'date', label);
+  const amount = asSafeInteger(obj, 'amount', label);
+  const matching_days = asSafeInteger(obj, 'matching_days', label);
+  const confidence = obj.confidence;
+  if (
+    !/^[a-f0-9]{64}$/.test(id) || !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+    amount <= 0 || matching_days < 5 || matching_days > 7 ||
+    typeof confidence !== 'number' || !Number.isFinite(confidence) || confidence < 0 || confidence > 1
+  ) {
+    unexpected('Invalid habit suggestion');
+  }
+  return {
+    suggestion: {
+      id, date, amount, matching_days, confidence,
+      category: asString(obj, 'category', label),
+      note: asString(obj, 'note', label),
+    },
   };
 }
 

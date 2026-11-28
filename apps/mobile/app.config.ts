@@ -9,7 +9,7 @@ const config: ExpoConfig = {
   userInterfaceStyle: 'light',
   platforms: ['android', 'ios'],
   icon: './assets/icon.png',
-  plugins: ['expo-router', 'expo-secure-store'],
+  plugins: ['expo-router', 'expo-secure-store', 'expo-notifications'],
 };
 
 export default config;

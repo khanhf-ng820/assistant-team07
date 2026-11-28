@@ -7,6 +7,7 @@ import { ApiHealthCheck } from '../../src/components/ApiHealthCheck';
 import { MonthCalendar } from '../../src/components/calendar/MonthCalendar';
 import { GreetingHeader } from '../../src/components/dashboard/GreetingHeader';
 import { MonthlyBudgetSummaryCard } from '../../src/components/dashboard/MonthlyBudgetSummaryCard';
+import { HabitPrompt } from '../../src/habits/HabitPrompt';
 import { colors, type } from '../../src/theme';
 
 function SessionStatusBar() {
@@ -59,6 +60,7 @@ export default function StatsScreen() {
       >
         {/* Top Greeting & Recorded Balance Header */}
         <GreetingHeader userName="Minh" />
+        <HabitPrompt />
 
         {/* Compact Calendar */}
         <MonthCalendar

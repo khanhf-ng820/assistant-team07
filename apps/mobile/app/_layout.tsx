@@ -8,6 +8,7 @@ import { DayTransactionsSheet } from '../src/components/calendar/DayTransactions
 import { ManualEntryModal } from '../src/components/manual-entry/ManualEntryModal';
 import { SignInGate } from '../src/components/SignInGate';
 import { LedgerProvider } from '../src/context/LedgerContext';
+import { HabitNotificationLink } from '../src/habits/HabitNotificationLink';
 import { colors, type } from '../src/theme';
 
 function AuthGate() {
@@ -40,6 +41,7 @@ export default function RootLayout() {
       <StatusBar style="dark" />
       <AuthProvider>
         <AuthGate />
+        <HabitNotificationLink />
       </AuthProvider>
     </SafeAreaProvider>
   );

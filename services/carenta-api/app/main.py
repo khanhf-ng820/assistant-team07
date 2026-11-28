@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Callable
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Path, Query, Response, status
 from pydantic import BaseModel, Field
 
 from app.auth import (
@@ -16,7 +16,8 @@ from app.auth import (
     load_auth_config,
     make_current_identity_dependency,
 )
-from app.errors import register_error_handlers
+from app.errors import ApiHttpError, register_error_handlers
+from app.habits import HabitSuggestionResponse
 from app.repository import (
     ActiveGoalExistsError,
     IdempotencyConflictError,
@@ -37,6 +38,9 @@ from app.schemas import (
 class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
     service: Literal["carenta-api"] = "carenta-api"
+
+
+HabitId = Annotated[str, Path(pattern=r"^[a-f0-9]{64}$")]
 
 
 class BudgetConfigRequest(BaseModel):
@@ -93,6 +97,33 @@ def create_router(
         if not item:
             raise HTTPException(status_code=404, detail="Transaction not found")
         return item
+
+    @router.get("/habits/suggestion", response_model=HabitSuggestionResponse)
+    def get_habit_suggestion(
+        response: Response, identity: AuthIdentity = Depends(get_current_identity),
+    ) -> HabitSuggestionResponse:
+        response.headers["Cache-Control"] = "no-store"
+        return HabitSuggestionResponse(suggestion=repo.get_habit_suggestion(identity.user_id))
+
+    @router.post("/habits/{suggestion_id}/confirm", response_model=TransactionResponse)
+    def confirm_habit(
+        suggestion_id: HabitId, identity: AuthIdentity = Depends(get_current_identity),
+    ) -> TransactionResponse:
+        try:
+            transaction = repo.confirm_habit(identity.user_id, suggestion_id)
+        except IdempotencyConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        if transaction is None:
+            raise ApiHttpError(409, "HABIT_STALE", "This suggestion is no longer available.")
+        return transaction
+
+    @router.post("/habits/{suggestion_id}/dismiss", response_model=HabitSuggestionResponse)
+    def dismiss_habit(
+        suggestion_id: HabitId, identity: AuthIdentity = Depends(get_current_identity),
+    ) -> HabitSuggestionResponse:
+        if not repo.dismiss_habit(identity.user_id, suggestion_id):
+            raise ApiHttpError(409, "HABIT_STALE", "This suggestion is no longer available.")
+        return HabitSuggestionResponse(suggestion=None)
 
     # --- Budget Summary (Safe-to-Spend & Recovery) ---
 

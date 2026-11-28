@@ -1,9 +1,16 @@
+import { clearLastNotificationResponse, useLastNotificationResponse } from 'expo-notifications';
 import { fireEvent, renderRouter, screen } from 'expo-router/testing-library';
 import RootLayout from '../app/_layout';
 import TabsLayout from '../app/(tabs)/_layout';
 import StatsScreen from '../app/(tabs)/index';
 import SavingsScreen from '../app/(tabs)/savings';
 import CalendarDetailScreen from '../app/calendar-detail';
+
+jest.mock('expo-notifications', () => ({
+  useLastNotificationResponse: jest.fn(() => null),
+  clearLastNotificationResponse: jest.fn(),
+  cancelScheduledNotificationAsync: jest.fn(async () => {}),
+}));
 
 const routes = {
   _layout: RootLayout,
@@ -61,4 +68,44 @@ it('navigates from StatsScreen to calendar-detail and returns', async () => {
 
   await fireEvent.press(screen.getByTestId('calendar-back-button'));
   expect(screen.getByTestId('greeting-header')).toBeVisible();
+});
+
+it('opens Stats when the user taps a habit reminder', async () => {
+  const previousUrl = process.env.EXPO_PUBLIC_API_URL;
+  process.env.EXPO_PUBLIC_API_URL = 'http://example.test';
+  const fetch = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    json: async () => ({ suggestion: null }),
+  } as unknown as Response);
+  jest.mocked(useLastNotificationResponse).mockReturnValue({
+    actionIdentifier: 'expo.modules.notifications.actions.DEFAULT',
+    notification: {
+      date: Date.now(),
+      request: {
+        identifier: 'reminder',
+        trigger: null,
+        content: {
+          title: 'CARENTA', body: 'Bạn có gợi ý thói quen mới.',
+          subtitle: null, categoryIdentifier: null, sound: null, threadIdentifier: null,
+          data: { kind: 'carenta-habit' },
+        },
+      },
+    },
+  });
+  try {
+    await renderRouter(routes, { initialUrl: '/savings' });
+    expect(await screen.findByTestId('greeting-header')).toBeVisible();
+    expect(clearLastNotificationResponse).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls.every(([, request]) => request?.method === 'GET')).toBe(true);
+  } finally {
+    if (previousUrl === undefined) {
+      delete process.env.EXPO_PUBLIC_API_URL;
+    } else {
+      process.env.EXPO_PUBLIC_API_URL = previousUrl;
+    }
+    fetch.mockRestore();
+    jest.mocked(useLastNotificationResponse).mockReturnValue(null);
+  }
 });
