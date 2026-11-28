@@ -13,6 +13,7 @@ export type ApiErrorCode =
   | 'NOT_FOUND'
   | 'BAD_REQUEST'
   | 'CONFLICT'
+  | 'HABIT_STALE'
   | 'VALIDATION_ERROR'
   | 'RATE_LIMITED'
   | 'INTERNAL_ERROR'

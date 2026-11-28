@@ -17,6 +17,10 @@ function prefKey(owner: string) {
   return `habit.enabled.${owner}`;
 }
 
+function lastScheduledDateKey(owner: string) {
+  return `habit.last-scheduled-date.${owner}`;
+}
+
 export async function readHabitReminders(owner: string): Promise<boolean> {
   return (
     await SecureStore.getItemAsync(prefKey(owner)) === 'true' &&
@@ -36,7 +40,10 @@ export function setHabitReminders(owner: string, enabled: boolean): Promise<bool
       if (!current.granted && !(await Notifications.requestPermissionsAsync()).granted) return false;
     }
     await SecureStore.setItemAsync(prefKey(owner), String(enabled));
-    if (!enabled) await Notifications.cancelScheduledNotificationAsync(REMINDER_ID);
+    if (!enabled) {
+      await Notifications.cancelScheduledNotificationAsync(REMINDER_ID);
+      await SecureStore.deleteItemAsync(lastScheduledDateKey(owner));
+    }
     return enabled;
   });
 }
@@ -45,7 +52,7 @@ export function scheduleHabitReminder(owner: string, date: string): Promise<void
   return serialize(async () => {
     const now = new Date();
     if (date !== todayInVietnam(now) || !(await readHabitReminders(owner))) return;
-    const lastDateKey = 'habit.last-scheduled-date';
+    const lastDateKey = lastScheduledDateKey(owner);
     if (await SecureStore.getItemAsync(lastDateKey) === date) return;
 
     const evening = new Date(`${date}T18:00:00+07:00`).getTime();

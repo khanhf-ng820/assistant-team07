@@ -207,7 +207,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     openDaySheet,
     closeDaySheet,
     isManualEntryOpen,
-      manualEntryDraft,
+    manualEntryDraft,
     openManualEntry,
     closeManualEntry,
   ]);

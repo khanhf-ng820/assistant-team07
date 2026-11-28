@@ -140,6 +140,7 @@ function HabitCard({ owner }: { owner: string }) {
             </Pressable>
             <Pressable
               accessibilityRole="button"
+              accessibilityState={{ disabled: busy }}
               disabled={busy}
               onPress={() => openManualEntry({
                 amount: suggestion.amount,
@@ -153,6 +154,7 @@ function HabitCard({ owner }: { owner: string }) {
             </Pressable>
             <Pressable
               accessibilityRole="button"
+              accessibilityState={{ disabled: busy }}
               disabled={busy}
               onPress={() => void resolveSuggestion(false)}
               style={styles.button}
@@ -189,7 +191,7 @@ const styles = StyleSheet.create({
   body: { ...type.body, color: colors.text, flexShrink: 1 },
   detail: { ...type.caption, color: colors.muted },
   actions: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
-  button: { minHeight: 48, justifyContent: 'center', paddingHorizontal: 14, borderRadius: 10 },
+  button: { minHeight: 48, minWidth: 48, justifyContent: 'center', paddingHorizontal: 14, borderRadius: 10 },
   primary: { backgroundColor: colors.primaryButton },
   primaryText: { ...type.bodyBold, color: colors.surface },
   secondaryText: { ...type.bodyBold, color: colors.muted },

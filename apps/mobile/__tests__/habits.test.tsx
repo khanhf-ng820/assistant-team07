@@ -27,6 +27,7 @@ jest.mock('expo-secure-store', () => {
   return {
     getItemAsync: jest.fn(async (key: string) => values.get(key) ?? null),
     setItemAsync: jest.fn(async (key: string, value: string) => { values.set(key, value); }),
+    deleteItemAsync: jest.fn(async (key: string) => { values.delete(key); }),
   };
 });
 
@@ -106,7 +107,7 @@ it('saves manual entries through the same API and reuses the key after an uncert
   }));
 });
 
-it('schedules generic opt-in reminders at most once per day on the device', async () => {
+it('deduplicates opted-in reminders per account and reschedules after an explicit re-enable', async () => {
   jest.useFakeTimers().setSystemTime(new Date('2026-11-26T09:00:00Z'));
   try {
     jest.mocked(Notifications.getPermissionsAsync).mockResolvedValue(permission(true));
@@ -130,6 +131,13 @@ it('schedules generic opt-in reminders at most once per day on the device', asyn
     expect(await setHabitReminders('student-1', false)).toBe(false);
     expect(Notifications.cancelScheduledNotificationAsync).toHaveBeenCalledTimes(2);
     expect(SecureStore.setItemAsync).toHaveBeenCalledWith('habit.enabled.student-1', 'false');
+    expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('habit.last-scheduled-date.student-1');
+    await setHabitReminders('student-1', true);
+    await scheduleHabitReminder('student-1', suggestion.date);
+    expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledTimes(2);
+    await setHabitReminders('student-other', true);
+    await scheduleHabitReminder('student-other', suggestion.date);
+    expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledTimes(3);
   } finally {
     jest.useRealTimers();
   }
