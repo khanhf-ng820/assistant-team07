@@ -15,6 +15,8 @@ jobs:
           python-version: "3.12"
       - name: Sync API dependencies
         run: uv sync --project services/carenta-api --locked --python 3.12
+      - name: Lint FastAPI service
+        run: uv run --project services/carenta-api ruff check --config services/carenta-api/pyproject.toml services/carenta-api
       - name: Run FastAPI test suite
         run: uv run --project services/carenta-api python -m pytest -c services/carenta-api/pyproject.toml services/carenta-api/tests -q
       - name: Verify OpenAPI vs mobile contract fields
@@ -36,12 +38,18 @@ jobs:
         run: npm ci
       - name: TypeScript typecheck
         run: npm run typecheck
+      - name: ESLint check
+        run: npm run lint
       - name: Run Jest unit and navigation tests
         run: npm test
       - name: Verify Android JS bundle export
         env:
           CI: "1"
         run: npx expo export --platform android --output-dir /tmp/carenta-export-android
+      - name: Verify iOS JS bundle export
+        env:
+          CI: "1"
+        run: npx expo export --platform ios --output-dir /tmp/carenta-export-ios
       - name: Check Expo dependency compatibility (advisory)
         continue-on-error: true
         env:
