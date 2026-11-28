@@ -17,6 +17,7 @@ from app.auth import (
     make_current_identity_dependency,
 )
 from app.errors import register_error_handlers
+from app.receipt_ocr import ReceiptExtractor, build_receipt_router
 from app.repository import (
     ActiveGoalExistsError,
     IdempotencyConflictError,
@@ -187,6 +188,8 @@ def create_app(
     auth_config: AuthConfig | None = None,
     token_verifier: TokenVerifier | None = None,
     repository: InMemoryRepository | None = None,
+    *,
+    receipt_extractor: ReceiptExtractor | None = None,
 ) -> FastAPI:
     application = FastAPI(
         title="CARENTA Financial API",
@@ -215,10 +218,13 @@ def create_app(
 
     # Mount v1 routers at both /api/v1 and /v1 for full interoperability
     api_v1_router = create_router(get_current_identity, active_repo)
+    receipt_router = build_receipt_router(get_current_identity, receipt_extractor)
     application.include_router(auth_router, prefix="/api/v1", tags=["auth"])
     application.include_router(auth_router, prefix="/v1", tags=["auth"])
     application.include_router(api_v1_router, prefix="/api/v1", tags=["API v1"])
     application.include_router(api_v1_router, prefix="/v1", tags=["v1"])
+    application.include_router(receipt_router, prefix="/api/v1", tags=["capture"])
+    application.include_router(receipt_router, prefix="/v1", tags=["capture"])
 
     return application
 

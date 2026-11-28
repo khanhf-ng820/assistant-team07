@@ -20,6 +20,8 @@ export interface CaptureChooserProps {
   onClose: () => void;
   onSelectManual?: () => void;
   onManualSelect?: () => void;
+  onSelectOcr?: () => void;
+  onReceiptSelect?: () => void;
   /**
    * Observer/telemetry callback fired when any capture method is tapped.
    * Runs alongside the active manual handler (`onSelectManual` or `LedgerContext.openManualEntry`).
@@ -45,6 +47,8 @@ export function CaptureChooser({
   onClose,
   onSelectManual,
   onManualSelect,
+  onSelectOcr,
+  onReceiptSelect,
   onSelectMethod,
 }: CaptureChooserProps) {
   let openManualEntryFromContext: (() => void) | undefined;
@@ -58,6 +62,7 @@ export function CaptureChooser({
 
   const manualHandler = onSelectManual ?? onManualSelect ?? openManualEntryFromContext;
   const hasManualSupport = Boolean(manualHandler || onSelectMethod);
+  const ocrHandler = onSelectOcr ?? onReceiptSelect;
 
   return (
     <Modal
@@ -91,7 +96,7 @@ export function CaptureChooser({
                 Chọn cách ghi giao dịch
               </Text>
               <Text style={styles.body}>
-                {hasManualSupport
+                {hasManualSupport || ocrHandler
                   ? 'Chọn phương thức để ghi nhận khoản chi tiêu mới.'
                   : 'Bản mẫu chưa hỗ trợ ghi giao dịch.'}
               </Text>
@@ -99,7 +104,7 @@ export function CaptureChooser({
 
             <View style={styles.optionsList}>
               {ACTION_OPTIONS.map(({ id, method, icon, description }) => {
-                const isEnabled = id === 'manual' && hasManualSupport;
+                const isEnabled = id === 'manual' ? hasManualSupport : id === 'ocr' && Boolean(ocrHandler);
                 const label = isEnabled ? method : `${method} — Chưa triển khai`;
 
                 return (
@@ -114,8 +119,8 @@ export function CaptureChooser({
                     onPress={() => {
                       if (!isEnabled) return;
                       onClose();
-                      // Trigger manual entry handler (prop override or LedgerContext.openManualEntry)
-                      manualHandler?.();
+                      if (id === 'manual') manualHandler?.();
+                      if (id === 'ocr') ocrHandler?.();
                       // Notify method selection observer if registered
                       onSelectMethod?.(id);
                     }}

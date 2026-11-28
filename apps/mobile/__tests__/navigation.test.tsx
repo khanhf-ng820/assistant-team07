@@ -1,4 +1,5 @@
 import { fireEvent, renderRouter, screen } from 'expo-router/testing-library';
+import { Text } from 'react-native';
 import RootLayout from '../app/_layout';
 import TabsLayout from '../app/(tabs)/_layout';
 import StatsScreen from '../app/(tabs)/index';
@@ -11,6 +12,7 @@ const routes = {
   '(tabs)/index': StatsScreen,
   '(tabs)/savings': SavingsScreen,
   'calendar-detail': CalendarDetailScreen,
+  'capture/ocr': () => <Text>Receipt camera route</Text>,
 };
 
 it('starts on Stats and switches between exactly two tabs', async () => {
@@ -30,14 +32,19 @@ it.each(['Thống kê', 'Tiết kiệm'])('opens and closes the same chooser fro
   // Manual entry is activated in Phase 1 (Issue #45)
   expect(screen.getByRole('button', { name: 'Nhập thủ công' })).toBeEnabled();
 
-  // OCR and Voice capture remain placeholders for Phase 2
-  for (const method of ['Quét hóa đơn', 'Ghi âm']) {
-    expect(screen.getByRole('button', { name: `${method} — Chưa triển khai` })).toBeDisabled();
-  }
+  expect(screen.getByRole('button', { name: 'Quét hóa đơn' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Ghi âm — Chưa triển khai' })).toBeDisabled();
 
   await fireEvent.press(screen.getByRole('button', { name: 'Đóng lựa chọn' }));
   expect(screen.queryByText('Chọn cách ghi giao dịch')).toBeNull();
   expect(screen.getByRole('tab', { name: tab })).toBeSelected();
+});
+
+it('opens the receipt camera route from the shared capture chooser', async () => {
+  await renderRouter(routes, { initialUrl: '/savings' });
+  await fireEvent.press(screen.getByRole('button', { name: 'Thêm giao dịch' }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Quét hóa đơn' }));
+  expect(screen.getByText('Receipt camera route')).toBeVisible();
 });
 
 it('opens ManualEntryModal when selecting Nhập thủ công from Tiết kiệm tab', async () => {

@@ -1,3 +1,4 @@
+import { CATEGORIES, type CategoryId } from '../types/transaction';
 import { ApiError } from './errors';
 
 export interface HealthResponse {
@@ -10,6 +11,26 @@ export interface AuthIdentity {
   email: string | null;
   role: string;
   auth_mode: 'supabase_jwt' | 'local_dev';
+}
+
+export interface ReceiptConfidence {
+  amount: number;
+  merchant: number;
+  description: number;
+  category: number;
+  timestamp: number;
+}
+
+export interface ReceiptOcrDraft {
+  document_type: 'receipt' | 'bank_transfer' | null;
+  amount: number | null;
+  currency: 'VND' | null;
+  merchant: string | null;
+  description: string | null;
+  category: CategoryId | null;
+  occurred_on: string | null;
+  timestamp: string | null;
+  confidence: ReceiptConfidence;
 }
 
 export type TransactionKind = 'income' | 'expense';
@@ -187,6 +208,50 @@ export function parseAuthIdentity(body: unknown): AuthIdentity {
     email: asNullableString(obj, 'email', 'AuthIdentity') ?? null,
     role: asString(obj, 'role', 'AuthIdentity'),
     auth_mode: authMode,
+  };
+}
+
+export function parseReceiptOcrDraft(body: unknown): ReceiptOcrDraft {
+  const label = 'ReceiptOcrDraft';
+  const obj = asRecord(body, label);
+  const { document_type, amount, currency, category } = obj;
+  if (document_type !== null && document_type !== 'receipt' && document_type !== 'bank_transfer') {
+    unexpected('Expected a known receipt document type');
+  }
+  if (amount !== null && (typeof amount !== 'number' || !Number.isSafeInteger(amount) || amount <= 0)) {
+    unexpected('Expected a positive integer receipt amount');
+  }
+  if (currency !== null && currency !== 'VND') {
+    unexpected('Expected VND for the receipt currency');
+  }
+  if (category !== null && (typeof category !== 'string' || !Object.hasOwn(CATEGORIES, category))) {
+    unexpected('Expected a known receipt category');
+  }
+  const scores = asRecord(obj.confidence, 'ReceiptConfidence');
+  function score(field: keyof ReceiptConfidence) {
+    const value = scores[field];
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
+      unexpected(`Expected ReceiptConfidence.${field} between 0 and 1`);
+    }
+    return value;
+  }
+
+  return {
+    document_type,
+    amount,
+    currency,
+    merchant: asNullableString(obj, 'merchant', label) ?? null,
+    description: asNullableString(obj, 'description', label) ?? null,
+    category: category as CategoryId | null,
+    occurred_on: asNullableString(obj, 'occurred_on', label) ?? null,
+    timestamp: asNullableString(obj, 'timestamp', label) ?? null,
+    confidence: {
+      amount: score('amount'),
+      merchant: score('merchant'),
+      description: score('description'),
+      category: score('category'),
+      timestamp: score('timestamp'),
+    },
   };
 }
 

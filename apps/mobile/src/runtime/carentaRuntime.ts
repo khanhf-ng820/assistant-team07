@@ -9,6 +9,7 @@ import {
   type GoalResponse,
   type GoalUpdate,
   type HealthResponse,
+  type ReceiptOcrDraft,
   type TransactionCreate,
   type TransactionListQuery,
   type TransactionListResponse,
@@ -19,6 +20,7 @@ import {
   parseGoal,
   parseGoalList,
   parseHealthResponse,
+  parseReceiptOcrDraft,
   parseTransaction,
   parseTransactionList,
 } from '../api/contracts';
@@ -50,6 +52,7 @@ import { type RawMobileEnv, resolveMobileConfig } from '../config';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const HEALTH_TIMEOUT_MS = 5_000;
+const RECEIPT_TIMEOUT_MS = 30_000;
 const REFRESH_LEEWAY_SECONDS = 30;
 
 export interface RequestOptions {
@@ -73,6 +76,7 @@ export type ReadResult<T> =
 export interface CarentaApiClient {
   checkHealth: (options?: RequestOptions) => Promise<HealthResponse>;
   getAuthMe: (options?: RequestOptions) => Promise<AuthIdentity>;
+  extractReceipt: (imageBase64: string, options?: RequestOptions) => Promise<ReceiptOcrDraft>;
   getBudgetSummary: (
     query?: BudgetSummaryQuery,
     options?: FallbackReadOptions
@@ -828,6 +832,13 @@ export function createCarentaRuntime(options: CarentaRuntimeOptions): CarentaRun
       }),
     getAuthMe: (reqOptions) =>
       requestJson('/api/v1/auth/me', parseAuthIdentity, { signal: reqOptions?.signal }),
+    extractReceipt: (imageBase64, reqOptions) =>
+      requestJson('/api/v1/capture/ocr', parseReceiptOcrDraft, {
+        method: 'POST',
+        body: { image_base64: imageBase64 },
+        timeoutMs: RECEIPT_TIMEOUT_MS,
+        signal: reqOptions?.signal,
+      }),
     getBudgetSummary: (query, readOptions) => {
       const qs = buildQuery({ today: query?.today, days_remaining: query?.days_remaining });
       return readWithFallback(

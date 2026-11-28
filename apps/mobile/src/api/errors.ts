@@ -15,6 +15,16 @@ export type ApiErrorCode =
   | 'CONFLICT'
   | 'VALIDATION_ERROR'
   | 'RATE_LIMITED'
+  | 'OCR_RATE_LIMITED'
+  | 'OCR_INVALID_IMAGE'
+  | 'OCR_IMAGE_TOO_LARGE'
+  | 'OCR_UNSUPPORTED_UPLOAD'
+  | 'OCR_UPLOAD_INTERRUPTED'
+  | 'OCR_NOT_CONFIGURED'
+  | 'OCR_TIMEOUT'
+  | 'OCR_UNAVAILABLE'
+  | 'OCR_FAILED'
+  | 'OCR_INVALID_RESULT'
   | 'INTERNAL_ERROR'
   | 'SERVER_ERROR'
   | 'HTTP_ERROR'
@@ -66,6 +76,16 @@ export function createAbortedError(): ApiError {
 }
 
 const VIETNAMESE_CODE_MESSAGES: Record<string, string> = {
+  OCR_INVALID_IMAGE: 'Ảnh không đọc được. Hãy chọn ảnh JPEG hoặc PNG rõ nét.',
+  OCR_IMAGE_TOO_LARGE: 'Ảnh phải có dung lượng tối đa 5 MB.',
+  OCR_UNSUPPORTED_UPLOAD: 'Định dạng tải ảnh lên chưa được hỗ trợ.',
+  OCR_UPLOAD_INTERRUPTED: 'Ảnh chưa được gửi hết. Vui lòng thử lại.',
+  OCR_NOT_CONFIGURED: 'Máy chủ chưa cấu hình đọc ảnh.',
+  OCR_RATE_LIMITED: 'Đã hết lượt đọc ảnh hôm nay. Bạn có thể thử lại vào ngày mai.',
+  OCR_TIMEOUT: 'Đọc ảnh mất quá nhiều thời gian. Bạn có thể thử lại.',
+  OCR_UNAVAILABLE: 'Dịch vụ đọc ảnh đang gián đoạn. Bạn có thể thử lại.',
+  OCR_FAILED: 'Máy chủ không thể đọc ảnh lúc này.',
+  OCR_INVALID_RESULT: 'Chưa đọc được kết quả đáng tin cậy. Hãy thử ảnh rõ hơn.',
   AUTH_REQUIRED: 'Vui lòng đăng nhập để tiếp tục.',
   AUTH_INVALID_CREDENTIALS: 'Email hoặc mật khẩu chưa đúng.',
   AUTH_TOKEN_EXPIRED: 'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.',
