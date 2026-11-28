@@ -185,3 +185,39 @@ def test_ledger_limit_is_per_student(monkeypatch):
     repo.create_transaction("student-a", entry)
     repo.create_transaction("student-b", entry)  # would exceed only if ledgers were shared
     assert len(repo.list_transactions("student-b")) == 1
+
+
+# --- Boundary cases requested in review ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("kind", "amount", "confirm", "status"),
+    [
+        ("expense", LARGE_EXPENSE_VND - 1, False, 201),  # just below MU01: no prompt
+        ("income", LARGE_INCOME_VND, True, 201),  # at threshold with confirmation
+        ("expense", MAX_AMOUNT_VND, True, 201),  # hard maximum with confirmation
+    ],
+)
+def test_boundary_amounts_accepted(app, kind, amount, confirm, status):
+    body = tx(amount=amount, kind=kind, key=f"{kind}-{amount}", confirm_large_amount=confirm)
+    assert call(app, "POST", "/api/v1/transactions", body).status_code == status
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"opening_balance": 0, "unpaid_commitments": 0, "savings_reserved": 0},
+        {"opening_balance": None, "unpaid_commitments": None, "savings_reserved": None},
+        {"opening_balance": MAX_AMOUNT_VND},
+    ],
+)
+def test_budget_config_accepts_zero_null_and_max(app, body):
+    assert call(app, "POST", "/api/v1/budget/config", body).status_code == 200
+
+
+def test_ledger_limit_is_reported_before_large_amount_prompt(app, monkeypatch):
+    """Never ask the student to confirm an entry that would be rejected anyway."""
+    monkeypatch.setattr(validation, "MAX_LEDGER_TOTAL_VND", LARGE_EXPENSE_VND)
+    call(app, "POST", "/api/v1/transactions", tx(1_000, key="small"))
+    response = call(app, "POST", "/api/v1/transactions", tx(LARGE_EXPENSE_VND, key="big"))
+    assert error_code(response) == "LEDGER_LIMIT_EXCEEDED"

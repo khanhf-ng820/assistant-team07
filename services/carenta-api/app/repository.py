@@ -145,11 +145,12 @@ class InMemoryRepository:
 
     @staticmethod
     def _check_new_transaction(ledger: _OwnerLedger, data: TransactionCreate, today: dt.date) -> None:
-        """#56 boundary guards; run only for new entries, after the idempotency lookup."""
+        """#56 boundary guards; run only for new entries, after the idempotency lookup.
+
+        Hard rejections come first, so a student is never asked to confirm an
+        entry (MU01) that would then be refused anyway.
+        """
         check_transaction_date(data.date, today)
-        hit = large_amount(data.kind, data.amount)
-        if hit is not None and not data.confirm_large_amount:
-            raise LargeAmountConfirmationRequired(hit)
         total_income = sum(t["amount"] for t in ledger.transactions.values() if t["kind"] == "income")
         total_expense = sum(t["amount"] for t in ledger.transactions.values() if t["kind"] == "expense")
         if data.kind == "income":
@@ -157,6 +158,9 @@ class InMemoryRepository:
         else:
             total_expense += data.amount
         check_ledger_totals(total_income, total_expense)
+        hit = large_amount(data.kind, data.amount)
+        if hit is not None and not data.confirm_large_amount:
+            raise LargeAmountConfirmationRequired(hit)
 
     def create_transaction(
         self, user_id: str, data: TransactionCreate, today: Optional[dt.date] = None
