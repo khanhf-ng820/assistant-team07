@@ -69,6 +69,7 @@ class _OwnerLedger:
     opening_balance: int = 0
     unpaid_commitments: int = 0
     savings_reserved: int = 0
+    revision: int = 0
 
 
 def _require_owner_id(user_id: str) -> str:
@@ -103,6 +104,16 @@ class InMemoryRepository:
         with self._lock:
             self._ledgers.clear()
 
+    def get_ledger_revision(self, user_id: str) -> int:
+        owner_id = _require_owner_id(user_id)
+        with self._lock:
+            ledger = self._ledgers.get(owner_id)
+            return ledger.revision if ledger is not None else 0
+
+    def list_owner_ids(self) -> list[str]:
+        with self._lock:
+            return sorted(self._ledgers.keys())
+
     def configure_budget(
         self,
         user_id: str,
@@ -113,12 +124,18 @@ class InMemoryRepository:
         owner_id = _require_owner_id(user_id)
         with self._lock:
             ledger = self._get_or_create_ledger(owner_id)
+            changed = False
             if opening_balance is not None:
                 ledger.opening_balance = opening_balance
+                changed = True
             if unpaid_commitments is not None:
                 ledger.unpaid_commitments = unpaid_commitments
+                changed = True
             if savings_reserved is not None:
                 ledger.savings_reserved = savings_reserved
+                changed = True
+            if changed:
+                ledger.revision += 1
 
     # --- Transactions ---
 
@@ -157,6 +174,7 @@ class InMemoryRepository:
             }
             ledger.transactions[tx_id] = record
             ledger.idempotency_map[data.idempotency_key] = tx_id
+            ledger.revision += 1
             snapshot = dict(record)
 
         return TransactionResponse(**snapshot)
@@ -228,6 +246,7 @@ class InMemoryRepository:
             }
             ledger.goals[goal_id] = record
             ledger.active_goal_id = goal_id
+            ledger.revision += 1
             snapshot = dict(record)
 
         return self._format_goal(snapshot, current_date)
@@ -239,15 +258,21 @@ class InMemoryRepository:
         owner_id = _require_owner_id(user_id)
         current_date = today or get_current_date()
         with self._lock:
-            _, record = self._active_goal_record(owner_id)
-            if record is None:
+            ledger, record = self._active_goal_record(owner_id)
+            if ledger is None or record is None:
                 return None
+            changed = False
             if data.title is not None:
                 record["title"] = data.title
+                changed = True
             if data.target_amount is not None:
                 record["target_amount"] = data.target_amount
+                changed = True
             if data.deadline is not None:
                 record["deadline"] = data.deadline
+                changed = True
+            if changed:
+                ledger.revision += 1
             snapshot = dict(record)
 
         return self._format_goal(snapshot, current_date)
@@ -268,6 +293,7 @@ class InMemoryRepository:
                 return None
             record["allocated_amount"] += amount
             ledger.savings_reserved -= min(amount, ledger.savings_reserved)
+            ledger.revision += 1
             snapshot = dict(record)
 
         return self._format_goal(snapshot, current_date)
