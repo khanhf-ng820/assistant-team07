@@ -11,7 +11,6 @@ Verifies:
 """
 
 import asyncio
-import datetime as dt
 import pytest
 import httpx
 
