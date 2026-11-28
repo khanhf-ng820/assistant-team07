@@ -4,45 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
-from dataclasses import dataclass
 
 import httpx
-import jwt
 from pydantic import SecretStr
 
-from app.auth import AuthConfig
 from app.main import create_app
 from app.repository import InMemoryRepository
 from app.settings import SchedulerSettings
+from tests.conftest import (
+    MutableClock as _MutableClock,
+    TEST_JWT_SECRET as TEST_SECRET,
+    make_hs256_token as _make_token,
+    strict_auth_config as _auth_config,
+)
 
-TEST_SECRET = "e2e-phase3-hmac-secret-at-least-32-bytes"
-TEST_ISSUER = "https://proj.supabase.co/auth/v1"
 CRON_SECRET = "e2e-cron-secret-value-2026"
-
-
-def _make_token(sub: str) -> str:
-    now = dt.datetime.now(dt.timezone.utc)
-    return jwt.encode(
-        {
-            "sub": sub,
-            "email": f"{sub}@hcmus.edu.vn",
-            "role": "authenticated",
-            "aud": "authenticated",
-            "iss": TEST_ISSUER,
-            "iat": int(now.timestamp()),
-            "exp": int((now + dt.timedelta(hours=1)).timestamp()),
-        },
-        TEST_SECRET,
-        algorithm="HS256",
-    )
-
-
-@dataclass
-class _MutableClock:
-    current_utc: dt.datetime
-
-    def __call__(self) -> dt.datetime:
-        return self.current_utc
 
 
 class _FlakyInsightProvider:
@@ -65,16 +41,11 @@ def test_phase1_to_phase3_multi_day_e2e_lifecycle():
     clock = _MutableClock(dt.datetime(2026, 11, 28, 0, 35, tzinfo=dt.timezone.utc))
     provider = _FlakyInsightProvider()
     repo = InMemoryRepository()
-    auth_config = AuthConfig(
-        supabase_url="https://proj.supabase.co",
-        jwt_secret=TEST_SECRET,
-        local_dev_auth=False,
-    )
     app = create_app(
-        auth_config=auth_config,
+        auth_config=_auth_config(),
         repository=repo,
         clock=clock,
-        scheduler_settings=SchedulerSettings(
+        scheduler_config=SchedulerSettings(
             enabled=True,
             poll_interval_seconds=30.0,
             scheduler_secret=SecretStr(CRON_SECRET),

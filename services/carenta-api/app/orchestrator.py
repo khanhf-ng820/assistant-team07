@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import datetime as dt
 import threading
-import unicodedata
 from typing import Literal, Protocol
 
 from app.assistant_schemas import (
@@ -22,9 +21,9 @@ from app.scheduler import (
     AssistantStateStore,
     BackgroundJobScheduler,
     Clock,
-    _make_trigger_id,
     default_utc_clock,
     format_vnd_dots,
+    make_trigger_id,
     to_local_datetime,
 )
 from app.schemas import BudgetSummaryResponse, TransactionResponse
@@ -74,17 +73,13 @@ class DeterministicInsightProvider:
             )
         if budget_summary.spent_today == 0:
             return (
-                f"Bạn còn {format_vnd_dots(budget_summary.safe_to_spend)}đ Có thể chi đến cuối tháng "
+                f"Bạn còn {format_vnd_dots(budget_summary.safe_to_spend)}đ có thể chi đến cuối tháng "
                 f"({format_vnd_dots(budget_summary.daily_budget)}đ/ngày)."
             )
         return (
             f"Hôm nay đã chi {format_vnd_dots(budget_summary.spent_today)}đ, "
             f"còn {format_vnd_dots(budget_summary.remaining_today)}đ trong hạn mức ngày."
         )
-
-
-def _normalize_note(note: str | None) -> str:
-    return " ".join(unicodedata.normalize("NFKC", note or "").split()).casefold()
 
 
 class AssistantOrchestrator:
@@ -122,14 +117,6 @@ class AssistantOrchestrator:
             self._state.remove_triggers_of_kind(
                 user_id, "evening_reminder", local_date=local_today
             )
-            active_habit = self._state.get_active_habit_candidate(user_id, local_today)
-            if active_habit is not None and (
-                active_habit.category == tx.category
-                and _normalize_note(active_habit.note) == _normalize_note(tx.note)
-            ):
-                self._state.remove_triggers_of_kind(
-                    user_id, "habit_suggestion", local_date=local_today
-                )
 
         self._reconcile_overspending_warning(user_id, local_now, local_today)
 
@@ -156,7 +143,7 @@ class AssistantOrchestrator:
             local_now=local_now,
             local_today=local_today,
         )
-        triggers = self._sorted_triggers(user_id)
+        triggers = self._sorted_triggers(user_id, local_today=local_today)
         habit_candidate = self._state.get_active_habit_candidate(user_id, local_today)
         return AssistantSnapshotResponse(
             budget_summary=budget_summary,
@@ -168,7 +155,8 @@ class AssistantOrchestrator:
         )
 
     def list_triggers(self, user_id: str) -> ProactiveTriggerListResponse:
-        items = self._sorted_triggers(user_id)
+        local_today = to_local_datetime(self._clock).date()
+        items = self._sorted_triggers(user_id, local_today=local_today)
         return ProactiveTriggerListResponse(items=items, total=len(items))
 
     def dismiss_trigger(self, user_id: str, trigger_id: str) -> TriggerDismissResponse:
@@ -194,18 +182,21 @@ class AssistantOrchestrator:
         else:
             auth_mode = "fail_closed_unconfigured"
 
-        overall_status: Literal["ready", "degraded"] = (
-            "ready" if auth_mode in {"local_dev", "supabase_jwt"} else "degraded"
-        )
-        provider_mode: Literal["configured", "deterministic_fallback"] = (
-            "configured" if self._provider is not None else "deterministic_fallback"
-        )
         scheduler_enabled = self._scheduler.settings.enabled
         scheduler_running = self._scheduler.is_running
         scheduler_state = (
             "running"
             if scheduler_running
             else ("configured_stopped" if scheduler_enabled else "disabled")
+        )
+        overall_status: Literal["ready", "degraded"] = (
+            "ready"
+            if auth_mode in {"local_dev", "supabase_jwt"}
+            and (not scheduler_enabled or scheduler_running)
+            else "degraded"
+        )
+        provider_mode: Literal["configured", "deterministic_fallback"] = (
+            "configured" if self._provider is not None else "deterministic_fallback"
         )
         return ReadinessResponse(
             status=overall_status,
@@ -221,8 +212,10 @@ class AssistantOrchestrator:
             },
         )
 
-    def _sorted_triggers(self, user_id: str) -> list[ProactiveTrigger]:
-        triggers = self._state.list_triggers(user_id)
+    def _sorted_triggers(
+        self, user_id: str, *, local_today: dt.date
+    ) -> list[ProactiveTrigger]:
+        triggers = self._state.list_triggers(user_id, local_date=local_today)
         triggers.sort(
             key=lambda trig: (
                 _TRIGGER_ORDER.get(trig.kind, 99),
@@ -246,11 +239,12 @@ class AssistantOrchestrator:
             return
 
         overrun = summary.overspent_amount_today
-        trigger_id = _make_trigger_id(
+        trigger_id = make_trigger_id(
             user_id, "overspending_warning", local_today, str(overrun)
         )
         existing_same = any(
-            trig.id == trigger_id for trig in self._state.list_triggers(user_id)
+            trig.id == trigger_id
+            for trig in self._state.list_triggers(user_id, local_date=local_today)
         )
         if existing_same or self._state.is_trigger_dismissed(user_id, trigger_id):
             return

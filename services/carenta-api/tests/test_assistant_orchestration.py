@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import datetime as dt
-from dataclasses import dataclass
 
-import httpx
-import jwt
 import pytest
 from pydantic import SecretStr
 
@@ -15,42 +11,13 @@ from app.auth import AuthConfig
 from app.main import create_app
 from app.repository import InMemoryRepository
 from app.settings import SchedulerSettings
-
-TEST_SECRET = "test-hmac-secret-at-least-32-bytes-long"
-TEST_ISSUER = "https://proj.supabase.co/auth/v1"
-
-
-def _make_token(sub: str = "student-a") -> str:
-    now = dt.datetime.now(dt.timezone.utc)
-    return jwt.encode(
-        {
-            "sub": sub,
-            "email": f"{sub}@hcmus.edu.vn",
-            "role": "authenticated",
-            "aud": "authenticated",
-            "iss": TEST_ISSUER,
-            "iat": int(now.timestamp()),
-            "exp": int((now + dt.timedelta(hours=1)).timestamp()),
-        },
-        TEST_SECRET,
-        algorithm="HS256",
-    )
-
-
-def _auth_config() -> AuthConfig:
-    return AuthConfig(
-        supabase_url="https://proj.supabase.co",
-        jwt_secret=TEST_SECRET,
-        local_dev_auth=False,
-    )
-
-
-@dataclass
-class _MutableClock:
-    current_utc: dt.datetime
-
-    def __call__(self) -> dt.datetime:
-        return self.current_utc
+from tests.conftest import (
+    MutableClock as _MutableClock,
+    TEST_JWT_SECRET as TEST_SECRET,
+    asgi_request as _request,
+    make_hs256_token as _make_token,
+    strict_auth_config as _auth_config,
+)
 
 
 class _RecordingInsightProvider:
@@ -66,22 +33,6 @@ class _RecordingInsightProvider:
             f"Gợi ý rev {ledger_revision}: còn {budget_summary.safe_to_spend:,}đ "
             f"cho {budget_summary.days_remaining} ngày."
         ).replace(",", ".")
-
-
-def _request(
-    application,
-    method: str,
-    path: str,
-    *,
-    json: dict | None = None,
-    headers: dict[str, str] | None = None,
-):
-    async def run():
-        transport = httpx.ASGITransport(app=application)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            return await client.request(method, path, json=json, headers=headers)
-
-    return asyncio.run(run())
 
 
 @pytest.mark.parametrize(
@@ -321,3 +272,34 @@ def test_ready_endpoint_reports_posture_without_leaking_secrets():
     assert res_unconf.status_code == 200
     assert res_unconf.json()["status"] == "degraded"
     assert res_unconf.json()["auth_mode"] == "fail_closed_unconfigured"
+
+    # scheduler_config alias is accepted and reports degraded when enabled but not started
+    app_stopped = create_app(
+        auth_config=_auth_config(),
+        repository=InMemoryRepository(),
+        scheduler_config=SchedulerSettings(enabled=True),
+    )
+    res_stopped = _request(app_stopped, "GET", "/ready")
+    assert res_stopped.status_code == 200
+    assert res_stopped.json()["scheduler_enabled"] is True
+    assert res_stopped.json()["scheduler_running"] is False
+    assert res_stopped.json()["status"] == "degraded"
+
+
+def test_prior_day_triggers_are_pruned_across_midnight_rollover():
+    clock = _MutableClock(dt.datetime(2026, 11, 28, 13, 5, tzinfo=dt.timezone.utc))  # 20:05 VN
+    repo = InMemoryRepository()
+    app = create_app(auth_config=_auth_config(), repository=repo, clock=clock)
+    headers = {"Authorization": f"Bearer {_make_token('student-a')}"}
+
+    eve = _request(app, "POST", "/api/v1/jobs/evening_reminder/run", headers=headers)
+    assert eve.status_code == 200
+    assert eve.json()["triggers_emitted"] == 1
+    assert _request(app, "GET", "/api/v1/assistant/triggers", headers=headers).json()["total"] == 1
+
+    # Roll past midnight Asia/Ho_Chi_Minh -> Nov 29 01:00 VN (18:00 UTC Nov 28)
+    clock.current_utc = dt.datetime(2026, 11, 28, 18, 0, tzinfo=dt.timezone.utc)
+    snap_next = _request(app, "GET", "/api/v1/assistant/snapshot", headers=headers)
+    assert snap_next.status_code == 200
+    assert snap_next.json()["active_triggers"] == []
+    assert _request(app, "GET", "/api/v1/assistant/triggers", headers=headers).json()["total"] == 0

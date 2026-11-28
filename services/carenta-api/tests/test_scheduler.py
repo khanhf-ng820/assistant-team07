@@ -4,71 +4,22 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
-from dataclasses import dataclass
 
 import httpx
-import jwt
 import pytest
 from pydantic import SecretStr
 
-from app.auth import AuthConfig
 from app.main import create_app
 from app.repository import InMemoryRepository
 from app.settings import SchedulerSettings, load_scheduler_settings
+from tests.conftest import (
+    MutableClock as _MutableClock,
+    asgi_request as _request,
+    make_hs256_token as _make_token,
+    strict_auth_config as _auth_config,
+)
 
-TEST_SECRET = "test-hmac-secret-at-least-32-bytes-long"
-TEST_ISSUER = "https://proj.supabase.co/auth/v1"
 SCHEDULER_SECRET = "scheduler-cron-secret-value-001"
-VN_TZ = dt.timezone(dt.timedelta(hours=7))
-
-
-def _make_token(sub: str = "student-a") -> str:
-    now = dt.datetime.now(dt.timezone.utc)
-    return jwt.encode(
-        {
-            "sub": sub,
-            "email": f"{sub}@hcmus.edu.vn",
-            "role": "authenticated",
-            "aud": "authenticated",
-            "iss": TEST_ISSUER,
-            "iat": int(now.timestamp()),
-            "exp": int((now + dt.timedelta(hours=1)).timestamp()),
-        },
-        TEST_SECRET,
-        algorithm="HS256",
-    )
-
-
-@dataclass
-class _MutableClock:
-    current_utc: dt.datetime
-
-    def __call__(self) -> dt.datetime:
-        return self.current_utc
-
-
-def _auth_config() -> AuthConfig:
-    return AuthConfig(
-        supabase_url="https://proj.supabase.co",
-        jwt_secret=TEST_SECRET,
-        local_dev_auth=False,
-    )
-
-
-def _request(
-    application,
-    method: str,
-    path: str,
-    *,
-    json: dict | None = None,
-    headers: dict[str, str] | None = None,
-):
-    async def run():
-        transport = httpx.ASGITransport(app=application)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            return await client.request(method, path, json=json, headers=headers)
-
-    return asyncio.run(run())
 
 
 def test_load_scheduler_settings_defaults_and_secret_wrapping():

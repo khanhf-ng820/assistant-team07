@@ -7,6 +7,7 @@ import contextlib
 import datetime as dt
 import hashlib
 import json
+import logging
 import threading
 import unicodedata
 from collections import Counter, defaultdict
@@ -57,6 +58,15 @@ def to_local_date(clock: Clock) -> dt.date:
 def format_vnd_dots(amount: int) -> str:
     """Format an integer VND amount with dot thousands separators."""
     return f"{amount:,}".replace(",", ".")
+
+
+logger = logging.getLogger(__name__)
+
+
+def make_trigger_id(owner_id: str, kind: str, local_date: dt.date, salt: str = "") -> str:
+    """Derive a deterministic trigger ID scoped to owner, kind, local date, and salt."""
+    raw = json.dumps((owner_id, kind, local_date.isoformat(), salt), ensure_ascii=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
 class HabitAnalyzerProtocol(Protocol):
@@ -160,11 +170,6 @@ class _OwnerAssistantState:
     active_habit_key: HabitKey | None = None
 
 
-def _make_trigger_id(owner_id: str, kind: str, local_date: dt.date, salt: str = "") -> str:
-    raw = json.dumps((owner_id, kind, local_date.isoformat(), salt), ensure_ascii=False)
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
-
-
 class AssistantStateStore:
     """Thread-safe per-Student Identity state for Proactive Triggers and Scheduled Job Runs."""
 
@@ -262,11 +267,25 @@ class AssistantStateStore:
             state = self._owners.get(owner_id)
             return state is not None and trigger_id in state.dismissed_trigger_ids
 
-    def list_triggers(self, owner_id: str) -> list[ProactiveTrigger]:
+    def list_triggers(
+        self, owner_id: str, *, local_date: dt.date | None = None
+    ) -> list[ProactiveTrigger]:
         with self._lock:
             state = self._owners.get(owner_id)
             if state is None:
                 return []
+            if local_date is not None:
+                stale_ids = [
+                    tid
+                    for tid, trig in state.active_triggers.items()
+                    if trig.local_date != local_date
+                ]
+                for tid in stale_ids:
+                    state.active_triggers.pop(tid, None)
+                    state.trigger_habit_keys.pop(tid, None)
+                if state.active_habit_candidate is not None and state.active_habit_candidate.date != local_date:
+                    state.active_habit_candidate = None
+                    state.active_habit_key = None
             return list(state.active_triggers.values())
 
     def get_active_habit_candidate(
@@ -318,12 +337,17 @@ class BackgroundJobScheduler:
         self._settings = settings or SchedulerSettings()
         self._clock = clock or default_utc_clock
         self._habit_analyzer = habit_analyzer or ConservativeHabitAnalyzer()
+        self._run_lock = threading.RLock()
         self._task: asyncio.Task[None] | None = None
         self._stop_event: asyncio.Event | None = None
 
     @property
     def settings(self) -> SchedulerSettings:
         return self._settings
+
+    @property
+    def state_store(self) -> AssistantStateStore:
+        return self._state
 
     @property
     def is_running(self) -> bool:
@@ -349,7 +373,10 @@ class BackgroundJobScheduler:
     async def _loop(self) -> None:
         assert self._stop_event is not None
         while not self._stop_event.is_set():
-            self.tick()
+            try:
+                self.tick()
+            except Exception:
+                logger.exception("Background scheduler tick failed")
             try:
                 await asyncio.wait_for(
                     self._stop_event.wait(),
@@ -371,36 +398,36 @@ class BackgroundJobScheduler:
 
     def run_job_for_owner(self, owner_id: str, job_name: JobName) -> ScheduledJobRunResponse:
         """Run one job idempotently for a single Student Identity."""
-        local_now = to_local_datetime(self._clock)
-        local_today = local_now.date()
-        existing = self._state.get_recorded_job_run(owner_id, job_name, local_today)
-        if existing is not None:
-            return ScheduledJobRunResponse(
+        with self._run_lock:
+            local_now = to_local_datetime(self._clock)
+            local_today = local_now.date()
+            existing = self._state.get_recorded_job_run(owner_id, job_name, local_today)
+            if existing is not None:
+                return ScheduledJobRunResponse(
+                    job_name=job_name,
+                    local_date=local_today,
+                    status="deduplicated",
+                    triggers_emitted=0,
+                    owners_evaluated=1,
+                    executed_at=local_now,
+                )
+
+            if job_name == "evening_reminder":
+                emitted = self._evaluate_evening_reminder(owner_id, local_now, local_today)
+            else:
+                emitted = self._evaluate_habit_analysis(owner_id, local_now, local_today)
+
+            status: str = "executed" if emitted > 0 else "skipped_no_action"
+            run = ScheduledJobRunResponse(
                 job_name=job_name,
                 local_date=local_today,
-                status="deduplicated",
-                triggers_emitted=0,
+                status=status,  # type: ignore[arg-type]
+                triggers_emitted=emitted,
                 owners_evaluated=1,
                 executed_at=local_now,
             )
-
-        emitted = 0
-        if job_name == "evening_reminder":
-            emitted = self._evaluate_evening_reminder(owner_id, local_now, local_today)
-        else:
-            emitted = self._evaluate_habit_analysis(owner_id, local_now, local_today)
-
-        status: str = "executed" if emitted > 0 else "skipped_no_action"
-        run = ScheduledJobRunResponse(
-            job_name=job_name,
-            local_date=local_today,
-            status=status,  # type: ignore[arg-type]
-            triggers_emitted=emitted,
-            owners_evaluated=1,
-            executed_at=local_now,
-        )
-        self._state.record_job_run(owner_id, run)
-        return run
+            self._state.record_job_run(owner_id, run)
+            return run
 
     def run_job_for_all_owners(self, job_name: JobName) -> ScheduledJobRunResponse:
         """Sweep all known Student Identities idempotently for internal cron triggers."""
@@ -475,7 +502,7 @@ class BackgroundJobScheduler:
         )
         if expenses_today:
             return 0
-        trigger_id = _make_trigger_id(owner_id, "evening_reminder", local_today)
+        trigger_id = make_trigger_id(owner_id, "evening_reminder", local_today)
         trigger = ProactiveTrigger(
             id=trigger_id,
             kind="evening_reminder",
@@ -508,7 +535,7 @@ class BackgroundJobScheduler:
             return 0
 
         candidate, habit_key = detected
-        trigger_id = _make_trigger_id(owner_id, "habit_suggestion", local_today, candidate.id)
+        trigger_id = make_trigger_id(owner_id, "habit_suggestion", local_today, candidate.id)
         formatted_amount = format_vnd_dots(candidate.amount)
         trigger = ProactiveTrigger(
             id=trigger_id,

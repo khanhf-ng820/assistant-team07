@@ -103,9 +103,19 @@ def create_router(
         )
     active_orchestrator = orchestrator or AssistantOrchestrator(
         repo=repo,
-        state_store=active_scheduler._state,
+        state_store=active_scheduler.state_store,
         scheduler=active_scheduler,
     )
+
+    def _create_active_goal(
+        user_id: str, payload: GoalCreate, today: Optional[dt.date]
+    ) -> GoalResponse:
+        try:
+            goal = repo.set_active_goal(user_id, payload, today=today)
+        except ActiveGoalExistsError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+        active_orchestrator.on_ledger_mutated(user_id)
+        return goal
 
     # --- Transactions ---
 
@@ -187,12 +197,7 @@ def create_router(
         today: Optional[dt.date] = Query(None, description="Calculation reference date"),
         identity: AuthIdentity = Depends(get_current_identity),
     ) -> GoalResponse:
-        try:
-            goal = repo.set_active_goal(identity.user_id, payload, today=today)
-        except ActiveGoalExistsError as exc:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
-        active_orchestrator.on_ledger_mutated(identity.user_id)
-        return goal
+        return _create_active_goal(identity.user_id, payload, today)
 
     @router.get("/goal", response_model=GoalResponse)
     def get_active_goal(
@@ -210,12 +215,7 @@ def create_router(
         today: Optional[dt.date] = Query(None, description="Calculation reference date"),
         identity: AuthIdentity = Depends(get_current_identity),
     ) -> GoalResponse:
-        try:
-            goal = repo.set_active_goal(identity.user_id, payload, today=today)
-        except ActiveGoalExistsError as exc:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
-        active_orchestrator.on_ledger_mutated(identity.user_id)
-        return goal
+        return _create_active_goal(identity.user_id, payload, today)
 
     @router.patch("/goal", response_model=GoalResponse)
     def update_active_goal(
@@ -299,6 +299,7 @@ def create_app(
     token_verifier: TokenVerifier | None = None,
     repository: InMemoryRepository | None = None,
     clock: Clock | None = None,
+    scheduler_config: SchedulerSettings | None = None,
     scheduler_settings: SchedulerSettings | None = None,
     habit_analyzer: HabitAnalyzerProtocol | None = None,
     scheduler_secret: str | None = None,
@@ -309,7 +310,9 @@ def create_app(
         resolved_config, verifier=token_verifier
     )
     active_repo = default_repository if repository is None else repository
-    resolved_scheduler = scheduler_settings or load_scheduler_settings()
+    resolved_scheduler = (
+        scheduler_config or scheduler_settings or load_scheduler_settings()
+    )
     if scheduler_secret is not None:
         cleaned_secret = scheduler_secret.strip()
         resolved_scheduler = SchedulerSettings(
