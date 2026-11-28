@@ -1,4 +1,12 @@
-import * as Notifications from 'expo-notifications';
+import {
+  AndroidImportance,
+  SchedulableTriggerInputTypes,
+  cancelScheduledNotificationAsync,
+  getPermissionsAsync,
+  requestPermissionsAsync,
+  scheduleNotificationAsync,
+  setNotificationChannelAsync,
+} from 'expo-notifications';
 import * as SecureStore from 'expo-secure-store';
 import { todayInVietnam } from '../savings/goal';
 
@@ -24,24 +32,24 @@ function lastScheduledDateKey(owner: string) {
 export async function readHabitReminders(owner: string): Promise<boolean> {
   return (
     await SecureStore.getItemAsync(prefKey(owner)) === 'true' &&
-    (await Notifications.getPermissionsAsync()).granted
+    (await getPermissionsAsync()).granted
   );
 }
 
 export function setHabitReminders(owner: string, enabled: boolean): Promise<boolean> {
   return serialize(async () => {
     if (enabled) {
-      await Notifications.setNotificationChannelAsync(CHANNEL, {
+      await setNotificationChannelAsync(CHANNEL, {
         name: 'Gợi ý thói quen',
-        importance: Notifications.AndroidImportance.DEFAULT,
+        importance: AndroidImportance.DEFAULT,
       });
-      const current = await Notifications.getPermissionsAsync();
+      const current = await getPermissionsAsync();
       if (!current.granted && !current.canAskAgain) return false;
-      if (!current.granted && !(await Notifications.requestPermissionsAsync()).granted) return false;
+      if (!current.granted && !(await requestPermissionsAsync()).granted) return false;
     }
     await SecureStore.setItemAsync(prefKey(owner), String(enabled));
     if (!enabled) {
-      await Notifications.cancelScheduledNotificationAsync(REMINDER_ID);
+      await cancelScheduledNotificationAsync(REMINDER_ID);
       await SecureStore.deleteItemAsync(lastScheduledDateKey(owner));
     }
     return enabled;
@@ -60,8 +68,8 @@ export function scheduleHabitReminder(owner: string, date: string): Promise<void
     const target = Math.max(evening, now.getTime() + 60_000);
     if (target >= midnight) return;
 
-    await Notifications.cancelScheduledNotificationAsync(REMINDER_ID);
-    await Notifications.scheduleNotificationAsync({
+    await cancelScheduledNotificationAsync(REMINDER_ID);
+    await scheduleNotificationAsync({
       identifier: REMINDER_ID,
       content: {
         title: 'CARENTA',
@@ -69,7 +77,7 @@ export function scheduleHabitReminder(owner: string, date: string): Promise<void
         data: { kind: HABIT_NOTIFICATION },
       },
       trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.DATE,
+        type: SchedulableTriggerInputTypes.DATE,
         date: new Date(target),
         channelId: CHANNEL,
         delivery: 'bestEffort',
@@ -80,5 +88,5 @@ export function scheduleHabitReminder(owner: string, date: string): Promise<void
 }
 
 export function cancelHabitReminder(): Promise<void> {
-  return serialize(() => Notifications.cancelScheduledNotificationAsync(REMINDER_ID));
+  return serialize(() => cancelScheduledNotificationAsync(REMINDER_ID));
 }
