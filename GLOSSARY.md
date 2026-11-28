@@ -27,3 +27,11 @@ _Avoid_: Balance, Free cash
 **Protected Funds**:
 The integer VND sum of unpaid commitments, allocated piggy-bank savings, and reserved period savings shielded from daily spending.
 _Avoid_: Locked balance, Reserve pool
+
+**Capture Draft**:
+An unsaved, user-editable expense proposal produced by OCR or Voice Capture that never alters cash balances or Safe-to-Spend until explicitly confirmed by the Student Identity.
+_Avoid_: AI transaction, Parsed transaction, Auto-saved expense
+
+**Voice Capture**:
+A bounded, single-purchase Vietnamese audio recording (at most 30 seconds) converted into a recognized transcript and Capture Draft.
+_Avoid_: Voice note, Voice transaction, Itemized voice split
