@@ -12,9 +12,13 @@ from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, s
 from pydantic import BaseModel, Field, SecretStr
 
 from app.assistant_schemas import (
+    AssistantSnapshotResponse,
     JobName,
     JobStatusResponse,
+    ProactiveTriggerListResponse,
+    ReadinessResponse,
     ScheduledJobRunResponse,
+    TriggerDismissResponse,
 )
 from app.auth import (
     AuthConfig,
@@ -24,6 +28,7 @@ from app.auth import (
     make_current_identity_dependency,
 )
 from app.errors import ApiHttpError, register_error_handlers
+from app.orchestrator import AssistantOrchestrator, InsightProviderProtocol
 from app.repository import (
     ActiveGoalExistsError,
     IdempotencyConflictError,
@@ -87,10 +92,19 @@ def create_router(
     get_current_identity: Callable[..., AuthIdentity],
     repo: InMemoryRepository,
     scheduler: BackgroundJobScheduler | None = None,
+    orchestrator: AssistantOrchestrator | None = None,
 ) -> APIRouter:
     router = APIRouter()
-    active_scheduler = scheduler or BackgroundJobScheduler(
-        repo=repo, state_store=AssistantStateStore()
+    if scheduler is not None:
+        active_scheduler = scheduler
+    else:
+        active_scheduler = BackgroundJobScheduler(
+            repo=repo, state_store=AssistantStateStore()
+        )
+    active_orchestrator = orchestrator or AssistantOrchestrator(
+        repo=repo,
+        state_store=active_scheduler._state,
+        scheduler=active_scheduler,
     )
 
     # --- Transactions ---
@@ -118,9 +132,11 @@ def create_router(
         identity: AuthIdentity = Depends(get_current_identity),
     ) -> TransactionResponse:
         try:
-            return repo.create_transaction(identity.user_id, payload)
+            created = repo.create_transaction(identity.user_id, payload)
         except IdempotencyConflictError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+        active_orchestrator.on_transaction_recorded(identity.user_id, created)
+        return created
 
     @router.get("/transactions/{transaction_id}", response_model=TransactionResponse)
     def get_transaction(
@@ -153,6 +169,7 @@ def create_router(
             unpaid_commitments=payload.unpaid_commitments,
             savings_reserved=payload.savings_reserved,
         )
+        active_orchestrator.on_ledger_mutated(identity.user_id)
         return {"status": "ok", "message": "Budget parameters updated"}
 
     # --- Saving Goals ---
@@ -171,9 +188,11 @@ def create_router(
         identity: AuthIdentity = Depends(get_current_identity),
     ) -> GoalResponse:
         try:
-            return repo.set_active_goal(identity.user_id, payload, today=today)
+            goal = repo.set_active_goal(identity.user_id, payload, today=today)
         except ActiveGoalExistsError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+        active_orchestrator.on_ledger_mutated(identity.user_id)
+        return goal
 
     @router.get("/goal", response_model=GoalResponse)
     def get_active_goal(
@@ -192,9 +211,11 @@ def create_router(
         identity: AuthIdentity = Depends(get_current_identity),
     ) -> GoalResponse:
         try:
-            return repo.set_active_goal(identity.user_id, payload, today=today)
+            goal = repo.set_active_goal(identity.user_id, payload, today=today)
         except ActiveGoalExistsError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+        active_orchestrator.on_ledger_mutated(identity.user_id)
+        return goal
 
     @router.patch("/goal", response_model=GoalResponse)
     def update_active_goal(
@@ -205,6 +226,7 @@ def create_router(
         goal = repo.update_active_goal(identity.user_id, payload, today=today)
         if not goal:
             raise HTTPException(status_code=404, detail="No active goal to update")
+        active_orchestrator.on_ledger_mutated(identity.user_id)
         return goal
 
     @router.post("/goal/allocate", response_model=GoalResponse)
@@ -216,7 +238,32 @@ def create_router(
         goal = repo.allocate_to_active_goal(identity.user_id, payload.amount, today=today)
         if not goal:
             raise HTTPException(status_code=404, detail="No active goal to allocate savings to")
+        active_orchestrator.on_ledger_mutated(identity.user_id)
         return goal
+
+    # --- Assistant Orchestration ---
+
+    @router.get("/assistant/snapshot", response_model=AssistantSnapshotResponse)
+    def get_assistant_snapshot(
+        identity: AuthIdentity = Depends(get_current_identity),
+    ) -> AssistantSnapshotResponse:
+        return active_orchestrator.get_snapshot(identity.user_id)
+
+    @router.get("/assistant/triggers", response_model=ProactiveTriggerListResponse)
+    def list_proactive_triggers(
+        identity: AuthIdentity = Depends(get_current_identity),
+    ) -> ProactiveTriggerListResponse:
+        return active_orchestrator.list_triggers(identity.user_id)
+
+    @router.post(
+        "/assistant/triggers/{trigger_id}/dismiss",
+        response_model=TriggerDismissResponse,
+    )
+    def dismiss_proactive_trigger(
+        trigger_id: str,
+        identity: AuthIdentity = Depends(get_current_identity),
+    ) -> TriggerDismissResponse:
+        return active_orchestrator.dismiss_trigger(identity.user_id, trigger_id)
 
     # --- Background Scheduler & Jobs ---
 
@@ -255,6 +302,7 @@ def create_app(
     scheduler_settings: SchedulerSettings | None = None,
     habit_analyzer: HabitAnalyzerProtocol | None = None,
     scheduler_secret: str | None = None,
+    insight_provider: InsightProviderProtocol | None = None,
 ) -> FastAPI:
     resolved_config = auth_config or load_auth_config()
     get_current_identity = make_current_identity_dependency(
@@ -279,6 +327,13 @@ def create_app(
         clock=clock,
         habit_analyzer=habit_analyzer,
     )
+    active_orchestrator = AssistantOrchestrator(
+        repo=active_repo,
+        state_store=state_store,
+        scheduler=active_scheduler,
+        clock=clock,
+        insight_provider=insight_provider,
+    )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -300,6 +355,10 @@ def create_app(
     def health() -> HealthResponse:
         return HealthResponse()
 
+    @application.get("/ready", response_model=ReadinessResponse)
+    def ready() -> ReadinessResponse:
+        return active_orchestrator.build_readiness(resolved_config)
+
     auth_router = APIRouter()
 
     @auth_router.get("/auth/me", response_model=AuthIdentity)
@@ -313,6 +372,7 @@ def create_app(
         get_current_identity,
         active_repo,
         scheduler=active_scheduler,
+        orchestrator=active_orchestrator,
     )
     application.include_router(auth_router, prefix="/api/v1", tags=["auth"])
     application.include_router(auth_router, prefix="/v1", tags=["auth"])

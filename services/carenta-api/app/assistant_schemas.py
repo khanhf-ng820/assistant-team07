@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas import BudgetSummaryResponse
+
 JobName = Literal["evening_reminder", "habit_analysis"]
 ProactiveTriggerKind = Literal[
     "overspending_warning",
@@ -75,3 +77,51 @@ class JobStatusResponse(BaseModel):
     scheduler_running: bool
     timezone: Literal["Asia/Ho_Chi_Minh"] = "Asia/Ho_Chi_Minh"
     jobs: list[JobScheduleSummary]
+
+
+class AssistantInsight(BaseModel):
+    """Coaching summary grounded in verified financial facts for one ledger revision."""
+
+    summary: str
+    source: Literal["provider", "deterministic_fallback"]
+    ledger_revision: int = Field(ge=0)
+    generated_at: dt.datetime
+
+
+class AssistantSnapshotResponse(BaseModel):
+    """Unified read-only view combining budget, insight, habit candidate, and triggers."""
+
+    budget_summary: BudgetSummaryResponse
+    insight: AssistantInsight
+    active_triggers: list[ProactiveTrigger]
+    habit_candidate: HabitCandidate | None = None
+    ledger_revision: int = Field(ge=0)
+    evaluated_at: dt.datetime
+
+
+class ProactiveTriggerListResponse(BaseModel):
+    """Active Proactive Triggers for one Student Identity."""
+
+    items: list[ProactiveTrigger]
+    total: int = Field(ge=0)
+
+
+class TriggerDismissResponse(BaseModel):
+    """Confirmation returned after dismissing a Proactive Trigger."""
+
+    trigger_id: str
+    status: Literal["dismissed"] = "dismissed"
+    cooldown_until: dt.date | None = None
+
+
+class ReadinessResponse(BaseModel):
+    """Secret-free deployment and subsystem readiness summary."""
+
+    status: Literal["ready", "degraded"]
+    service: Literal["carenta-api"] = "carenta-api"
+    auth_mode: Literal["supabase_jwt", "local_dev", "fail_closed_unconfigured"]
+    scheduler_enabled: bool
+    scheduler_running: bool
+    insight_provider: Literal["configured", "deterministic_fallback"]
+    subsystems: dict[str, str]
+
