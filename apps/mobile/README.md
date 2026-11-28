@@ -159,6 +159,76 @@ assume the App Store client supports this SDK or that enrollment/build costs are
 approved. Physical-iPhone support, IPA signing, TestFlight distribution and App
 Store publication are not part of this increment.
 
+## Quick-capture deep links and Android shortcuts (issue #53)
+
+The app registers the `carenta://` scheme and three entry points:
+
+| Link | Opens |
+|---|---|
+| `carenta://capture/ocr` | receipt scan entry |
+| `carenta://capture/voice` | voice capture entry |
+| `carenta://capture/manual` | manual entry |
+
+Only these three kinds are accepted (`src/capture/routes.ts`). Any other kind
+(`carenta://capture/anything`) or unmatched route (`app/+not-found.tsx`)
+redirects to the home tab; a link or query string can never choose another screen.
+`carenta://capture/manual` opens the root `ManualEntryModal` (from #45). The
+`ocr` and `voice` routes remain **entry points only** (`Chưa triển khai`, recording
+nothing) until the OCR (#48) and voice (#49) screens land; to connect one,
+replace the body of the matching `app/capture/<kind>.tsx`.
+
+**Android shortcuts & external voice hooks.** `plugins/withCaptureShortcuts.js`
+adds three static launcher shortcuts (long-press the app icon) plus an
+`actions.intent.OPEN_APP_FEATURE` App Actions capability (`<shortcut-fulfillment>`,
+capability-level `<url-template android:value="carenta://capture{?feature}" />` with
+`<parameter android:name="feature" android:key="feature" />`, and `<capability-binding>`
+backed by `res/values/carenta_shortcut_arrays.xml`). Incoming `?feature=` queries route
+through `app/capture/index.tsx` and `resolveCaptureFeature()` against the strict
+allowlist before redirecting to `/capture/{ocr,voice,manual}` (or `/` if unknown).
+Static shortcuts and App Actions declarations exist only in a development build or
+an installed APK, **not in Expo Go**. They require `android.package` (`com.carenta.app`)
+in `app.config.ts`. Generate and inspect the native files with
+`npx expo prebuild --platform android --no-install` (`android/` is ignored by Git;
+discard it and any `package.json` script changes that prebuild makes).
+
+**Voice assistant.** While the `OPEN_APP_FEATURE` capability, `<url-template>`
+parameter mapping, and shortcut bindings are generated in XML and checked by Jest,
+neither the Android Studio App Actions Test Tool nor Google Assistant hand-off on
+a physical Android device has been executed yet. Treat the external voice trigger as
+unverified on device until tested in an installed development build.
+
+### Test the deep links
+
+Automated: `npm test` (route allowlist, `manual` deep-link to `ManualEntryModal`
+flow and timed save check, `ocr`/`voice` placeholder rendering, redirect of
+unknown kinds/paths, App Actions XML/array generation, and manifest edits).
+
+On a device or emulator with a development build installed:
+
+```sh
+adb shell am start -a android.intent.action.VIEW -d "carenta://capture/manual"
+adb shell am start -a android.intent.action.VIEW -d "carenta://capture/voice"
+adb shell am start -a android.intent.action.VIEW -d "carenta://capture/unknown"   # should land on Thống kê
+```
+
+Then long-press the app icon and confirm the three shortcuts open the matching entry.
+
+### Check the 5-second limit
+
+Two parts, because a script cannot drive the phone:
+
+1. **API leg (scripted).** With the API running, from the repository root:
+   `python scripts/measure_capture_latency.py --base-url http://127.0.0.1:8000 --runs 20`.
+   It posts synthetic transactions (note `latency-probe`) to `POST /v1/transactions`,
+   prints min/median/p95/max, and exits 1 if any run exceeds 5 seconds. Run it only
+   against a local development API. Verified on 2026-11-25 against local Uvicorn
+   (20 runs: min `0.0149s`, median `0.0155s`, p95 `0.021s`, max `0.0429s` — PASS).
+2. **Whole interaction (manual).** On a phone, start a stopwatch when you tap the
+   shortcut and stop it when the saved transaction appears. Repeat at least 10 times
+   and record the slowest. Automated mobile Jest timing covers `carenta://capture/manual`
+   deep-link dispatch to local save (`__tests__/capture-latency.test.tsx`); physical
+   device timing for OCR/voice waits on #48/#49/#50.
+
 ## Checks
 
 Run inside `apps/mobile/`:

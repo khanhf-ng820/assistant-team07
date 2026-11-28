@@ -8,3 +8,9 @@ it('enables iOS development and exports without disabling Android', () => {
 
   expect(exp.platforms).toEqual(expect.arrayContaining(['android', 'ios']));
 });
+
+it('registers the carenta:// deep-link scheme used by capture shortcuts', () => {
+  const { exp } = getConfig(process.cwd(), { isPublicConfig: true });
+
+  expect(exp.scheme).toBe('carenta');
+});
