@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import datetime as dt
 import json
 from io import BytesIO
 
@@ -7,7 +8,9 @@ import httpx
 import pytest
 from PIL import Image, PngImagePlugin
 
+import app.receipt_ocr as ocr
 from app.auth import AuthConfig
+from app.errors import ApiHttpError
 from app.main import create_app
 from app.receipt_ocr import MAX_REQUEST_BYTES, GeminiReceiptExtractor, ReceiptOcrDraft
 from app.repository import InMemoryRepository
@@ -132,3 +135,52 @@ def test_provider_failure_has_a_safe_error(status, response_body, expected_statu
     assert response.status_code == expected_status
     assert response.json()["error"]["code"] == error_code
     assert "test-key" not in response.text
+
+
+def test_daily_limits_share_all_route_aliases_and_reset_on_the_next_day(monkeypatch):
+    day = dt.date(2026, 11, 28)
+    monkeypatch.setattr(ocr, "get_current_date", lambda: day)
+    monkeypatch.setattr(ocr, "OCR_DAILY_USER_LIMIT", 2)
+    calls = []
+
+    async def extract(_image):
+        calls.append(True)
+        return ReceiptOcrDraft.model_validate(draft_fields())
+
+    application = create_app(auth_config=AuthConfig(local_dev_auth=True), receipt_extractor=extract)
+    upload = {"image_base64": fixture_image("JPEG")}
+    assert request(application, "POST", "/api/v1/capture/ocr", json=upload).status_code == 200
+    assert request(application, "POST", "/v1/captures/receipt", json=upload).status_code == 200
+    limited = request(application, "POST", "/api/v1/captures/receipt", json=upload)
+    assert limited.status_code == 429
+    assert limited.json()["error"]["code"] == "OCR_RATE_LIMITED"
+    assert len(calls) == 2
+    day += dt.timedelta(days=1)
+    assert request(application, "POST", "/api/v1/capture/ocr", json=upload).status_code == 200
+    assert len(calls) == 3
+
+
+def test_quota_is_per_student_with_a_shared_service_ceiling(monkeypatch):
+    monkeypatch.setattr(ocr, "OCR_DAILY_USER_LIMIT", 1)
+    monkeypatch.setattr(ocr, "OCR_DAILY_SERVICE_LIMIT", 2)
+    quota = ocr.DailyOcrQuota()
+    quota.reserve("student-a")
+    with pytest.raises(ApiHttpError, match="daily image extraction limit"):
+        quota.reserve("student-a")
+    quota.reserve("student-b")
+    with pytest.raises(ApiHttpError, match="daily image extraction limit"):
+        quota.reserve("student-c")
+
+
+def test_transparent_png_is_composited_on_white():
+    with BytesIO() as buffer:
+        Image.new("RGBA", (64, 64), (0, 0, 0, 0)).save(buffer, format="PNG")
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    with Image.open(BytesIO(ocr.prepare_receipt_image(encoded))) as clean:
+        assert clean.getpixel((0, 0)) == (255, 255, 255)
+
+
+def test_provider_empty_merchant_and_note_become_unknown():
+    fields = {**draft_fields(), "merchant": "", "description": "  "}
+    draft = ReceiptOcrDraft.model_validate(fields)
+    assert draft.merchant is None and draft.description is None

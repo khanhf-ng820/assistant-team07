@@ -52,6 +52,11 @@ then sends an inline image to Gemini with a 20-second deadline. The response
 contains a draft with integer VND amount, description, category, date or
 timestamp, and extraction estimates. Fields without clear evidence are `null`.
 The OCR request does not create a ledger transaction or store the image.
+Valid uploads reserve one extraction attempt before calling Gemini. An account
+gets 10 attempts per Vietnam calendar day, with a ceiling of 100 attempts per
+API process across all accounts and route aliases. Local Dev Mode shares an
+account quota. Limits return `429 OCR_RATE_LIMITED` and reset at midnight
+Vietnam time. Counters are held in memory and also reset on process restart.
 
 ## Database schema and secrets (issue #42)
 

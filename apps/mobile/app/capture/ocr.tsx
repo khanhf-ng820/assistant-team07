@@ -3,13 +3,15 @@ import { File, Paths } from 'expo-file-system';
 import { launchImageLibraryAsync, UIImagePickerPreferredAssetRepresentationMode } from 'expo-image-picker';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Image, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Animated, Image, Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { ReceiptOcrDraft } from '../../src/api/contracts';
 import { isApiError } from '../../src/api/errors';
 import { useAuth } from '../../src/auth/AuthContext';
+import { Button } from '../../src/components/Button';
+import { Header } from '../../src/components/Header';
 import { formatVnd } from '../../src/format';
-import { colors, type } from '../../src/theme';
+import { colors, radius, spacing, typography } from '../../src/theme';
 import { CATEGORIES, formatVietnameseDate } from '../../src/types/transaction';
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -23,25 +25,6 @@ function removeTemporaryImage(uri: string | null) {
   } catch {
     // A cache file may already have been released by the operating system.
   }
-}
-
-function Action({ label, onPress, disabled = false, filled = false }: {
-  label: string;
-  onPress: () => void;
-  disabled?: boolean;
-  filled?: boolean;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      onPress={onPress}
-      style={[styles.action, filled && styles.filled, disabled && styles.disabled]}
-    >
-      <Text style={[styles.actionText, filled && styles.filledText]}>{label}</Text>
-    </Pressable>
-  );
 }
 
 function DraftResult({ draft }: { draft: ReceiptOcrDraft }) {
@@ -174,6 +157,10 @@ export default function ReceiptCaptureScreen() {
     if (!photo) return;
     void perform('ocr', async (signal) => {
       const file = new File(photo);
+      if (!file.exists || !file.size) {
+        setMessage('Không thể mở ảnh này. Hãy thử ảnh khác.');
+        return;
+      }
       if (file.size > MAX_IMAGE_BYTES) {
         setMessage('Ảnh phải có dung lượng tối đa 5 MB.');
         return;
@@ -193,13 +180,15 @@ export default function ReceiptCaptureScreen() {
 
   return (
     <SafeAreaView style={styles.screen}>
+      <Header
+        title="Quét hóa đơn"
+        onBack={() => router.canGoBack() ? router.back() : router.replace('/')}
+      />
       <ScrollView contentContainerStyle={styles.content}>
-        <Action label="Quay lại" onPress={() => router.canGoBack() ? router.back() : router.replace('/')} />
-        <Text accessibilityRole="header" style={styles.heading}>Quét hóa đơn</Text>
         {draft ? (
           <>
             <DraftResult draft={draft} />
-            <Action label="Quét ảnh khác" onPress={() => setDraft(null)} />
+            <Button title="Quét ảnh khác" variant="outline" onPress={() => setDraft(null)} />
           </>
         ) : (
           <>
@@ -236,9 +225,8 @@ export default function ReceiptCaptureScreen() {
             {photo ? (
               <>
                 <Text style={styles.detail}>Ảnh sẽ được gửi đến Google Gemini để đọc thông tin.</Text>
-                {busy === 'ocr' ? <ActivityIndicator accessibilityLabel="Đang đọc ảnh" /> : null}
-                <Action label={busy === 'ocr' ? 'Đang đọc ảnh…' : 'Đọc ảnh bằng AI'} onPress={readPhoto} disabled={!!busy} filled />
-                <Action label="Bỏ ảnh" disabled={!!busy} onPress={() => {
+                <Button title={busy === 'ocr' ? 'Đang đọc ảnh…' : 'Đọc ảnh bằng AI'} onPress={readPhoto} disabled={!!busy} loading={busy === 'ocr'} />
+                <Button title="Bỏ ảnh" variant="outline" disabled={!!busy} onPress={() => {
                   setSelectedImage(null);
                   setMessage(null);
                 }} />
@@ -246,13 +234,13 @@ export default function ReceiptCaptureScreen() {
             ) : (
               <>
                 {showCamera ? (
-                  <Action label="Chụp ảnh" disabled={!ready || !!busy} filled onPress={() => {
+                  <Button title="Chụp ảnh" disabled={!ready || !!busy} onPress={() => {
                     selectPhoto(async () => (await camera.current?.takePictureAsync({ quality: 0.85 }))?.uri ?? null);
                   }} />
                 ) : (
-                  <Action label="Mở camera" onPress={openCamera} disabled={!!busy} filled />
+                  <Button title="Mở camera" onPress={openCamera} disabled={!!busy} />
                 )}
-                <Action label="Chọn ảnh từ thư viện" disabled={!!busy} onPress={() => {
+                <Button title="Chọn ảnh từ thư viện" variant="outline" disabled={!!busy} onPress={() => {
                   selectPhoto(async () => {
                     const picked = await launchImageLibraryAsync({
                       mediaTypes: ['images'],
@@ -263,7 +251,7 @@ export default function ReceiptCaptureScreen() {
                   });
                 }} />
                 {permission && !permission.granted && !permission.canAskAgain ? (
-                  <Action label="Mở cài đặt quyền" onPress={() => void Linking.openSettings()} />
+                  <Button title="Mở cài đặt quyền" variant="outline" onPress={() => void Linking.openSettings()} />
                 ) : null}
               </>
             )}
@@ -276,29 +264,20 @@ export default function ReceiptCaptureScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
-  content: { padding: 20, gap: 14 },
-  heading: { ...type.heading, color: colors.text },
-  detail: { ...type.body, color: colors.muted },
+  content: { padding: spacing.lg, gap: spacing.md },
+  detail: { ...typography.body, color: colors.muted },
   viewfinder: {
-    height: 286, borderRadius: 18, overflow: 'hidden', backgroundColor: colors.text,
+    height: 286, borderRadius: radius.lg, overflow: 'hidden', backgroundColor: colors.text,
     alignItems: 'center', justifyContent: 'center',
   },
   image: { width: '100%', height: '100%' },
-  guide: { width: '86%', height: 180, borderColor: '#5EEAD4', borderWidth: 2, borderRadius: 12 },
-  scanLine: { height: 2, marginHorizontal: 6, backgroundColor: '#5EEAD4' },
-  action: {
-    minHeight: 48, borderWidth: 1, borderColor: colors.border, borderRadius: 12,
-    justifyContent: 'center', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8,
-  },
-  filled: { backgroundColor: colors.primary, borderColor: colors.primary },
-  actionText: { ...type.bodyBold, color: colors.primary },
-  filledText: { color: colors.surface },
-  disabled: { opacity: 0.5 },
-  message: { ...type.body, color: colors.text, backgroundColor: colors.surface, padding: 12 },
-  result: { backgroundColor: colors.surface, borderRadius: 16, padding: 16, gap: 12 },
-  resultHeading: { ...type.heading, color: colors.text },
-  amount: { ...type.heading, color: colors.primary },
-  field: { gap: 2 },
-  fieldLabel: { ...type.bodyBold, color: colors.text },
-  fieldValue: { ...type.body, color: colors.muted },
+  guide: { width: '86%', height: 180, borderColor: colors.primaryLight, borderWidth: 2, borderRadius: radius.md },
+  scanLine: { height: 2, marginHorizontal: spacing.sm, backgroundColor: colors.primaryLight },
+  message: { ...typography.body, color: colors.text, backgroundColor: colors.surface, padding: spacing.md },
+  result: { backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.md },
+  resultHeading: { ...typography.heading, color: colors.text },
+  amount: { ...typography.heading, color: colors.primary },
+  field: { gap: spacing.xs },
+  fieldLabel: { ...typography.bodyBold, color: colors.text },
+  fieldValue: { ...typography.body, color: colors.muted },
 });
