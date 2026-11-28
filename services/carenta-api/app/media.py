@@ -2,16 +2,21 @@
 
 Uploads are never trusted by their file name or declared Content-Type. The
 actual format is detected from the bytes, structure is checked, size and
-dimension/duration bounds are enforced (plan §11: one JPEG/PNG receipt up to
+dimension/duration bounds are enforced (plan §10: one JPEG/PNG receipt up to
 5 MB, voice up to 30 seconds), and privacy-sensitive metadata is removed before
 anything is stored:
 
-- JPEG: drops EXIF/XMP (APP1), other application segments except JFIF (APP0),
-  ICC colour profile (APP2) and Adobe (APP14), comments, and trailing bytes.
-- PNG: drops text, EXIF and timestamp chunks and trailing bytes; CRCs are checked.
-- M4A (MP4/AAC, what ``expo-audio`` records on Android and iOS): user-data and
-  metadata boxes are overwritten in place with ``free`` boxes, so sample offsets
-  stay valid while tags such as recording location are removed.
+- JPEG: walks every segment and scan to the real end-of-image marker; drops
+  EXIF/XMP (APP1), other application segments except JFIF (APP0), ICC colour
+  profile (APP2) and Adobe (APP14), comments (also between progressive scans),
+  and anything appended after the image.
+- PNG: drops text, EXIF and timestamp chunks and trailing bytes; CRCs are checked
+  and at least one image-data chunk is required.
+- M4A (MP4/AAC, what ``expo-audio`` records on Android and iOS): an audio
+  (``soun``) track is required; user-data and metadata boxes at the top level,
+  in ``moov`` and in each ``trak`` are overwritten in place with ``free`` boxes
+  (32- and 64-bit sizes), so sample offsets stay valid while tags such as
+  recording location are removed.
 
 Only the standard library is used, so nothing here decodes pixels or audio.
 """
@@ -184,16 +189,39 @@ def _sanitize_jpeg(data: bytes) -> tuple[bytes, int, int]:
             if length < 8:
                 raise _corrupt("image")
             height, width = struct.unpack(">HH", data[pos + 5 : pos + 9])
-        if marker == 0xDA:  # start of scan: copy compressed data through the last EOI
-            eoi = data.rfind(b"\xff\xd9")
-            if width is None or eoi < end:
+        if marker == 0xDA:  # start of scan: copy entropy-coded data up to the next marker
+            if width is None:
                 raise _corrupt("image")
-            out += data[pos : eoi + 2]
-            return bytes(out), width, height
+            out += segment
+            pos = _end_of_scan(data, end)
+            out += data[end:pos]
+            if data[pos + 1] == 0xD9:  # real end of image; anything after it is dropped
+                out += b"\xff\xd9"
+                return bytes(out), width, height
+            continue  # progressive JPEG: more tables/scans follow, filtered by this loop
         is_app = 0xE0 <= marker <= 0xEF
         if not ((is_app and marker not in _JPEG_KEEP_APP) or marker == 0xFE):
             out += segment
         pos = end
+
+
+def _end_of_scan(data: bytes, pos: int) -> int:
+    """Index of the first real marker after entropy-coded data starting at ``pos``.
+
+    ``FF 00`` (byte stuffing) and ``FF D0``-``FF D7`` (restart markers) belong to
+    the scan; ``FF FF`` is fill before a marker.
+    """
+    while True:
+        i = data.find(b"\xff", pos)
+        if i == -1 or i + 1 >= len(data):
+            raise _corrupt("image")
+        nxt = data[i + 1]
+        if nxt == 0x00 or 0xD0 <= nxt <= 0xD7:
+            pos = i + 2
+        elif nxt == 0xFF:
+            pos = i + 1
+        else:
+            return i
 
 
 # --- PNG ------------------------------------------------------------------
@@ -206,6 +234,7 @@ def _sanitize_png(data: bytes) -> tuple[bytes, int, int]:
     pos = 8
     width = height = None
     first = True
+    has_idat = False
     while True:
         if pos + 12 > len(data):
             raise _corrupt("image")
@@ -223,9 +252,13 @@ def _sanitize_png(data: bytes) -> tuple[bytes, int, int]:
                 raise _corrupt("image")
             width, height = struct.unpack(">II", body[:8])
             first = False
+        if ctype == b"IDAT":
+            has_idat = True
         if ctype not in _PNG_DROP_CHUNKS:
             out += data[pos:end]
         if ctype == b"IEND":
+            if not has_idat:
+                raise _corrupt("image")
             return bytes(out), width, height
         pos = end
 
@@ -254,7 +287,9 @@ def _iter_boxes(data: bytes | bytearray, start: int, stop: int):
 
 
 def _blank_box(buf: bytearray, pos: int, header: int, size: int) -> None:
-    buf[pos + header - 4 : pos + header] = b"free"
+    """Turn a box into ``free`` in place. The type is always at ``pos + 4``; a
+    64-bit box keeps its ``largesize`` (``pos + 8 : pos + 16``) untouched."""
+    buf[pos + 4 : pos + 8] = b"free"
     buf[pos + header : pos + size] = bytes(size - header)
 
 
@@ -273,6 +308,7 @@ def _sanitize_m4a(data: bytes) -> tuple[bytes, int]:
 
     duration_ms = None
     has_mdat = False
+    has_audio_track = False
     for pos, header, size, btype in boxes[1:]:
         if btype == b"mdat":
             has_mdat = True
@@ -284,15 +320,33 @@ def _sanitize_m4a(data: bytes) -> tuple[bytes, int]:
                     duration_ms = _mvhd_duration_ms(buf, cpos + cheader, cpos + csize)
                 elif ctype in _MP4_METADATA_BOXES:
                     _blank_box(buf, cpos, cheader, csize)
-    if duration_ms is None or not has_mdat:
+                elif ctype == b"trak":
+                    has_audio_track |= _sanitize_trak(buf, cpos + cheader, cpos + csize)
+    if duration_ms is None or not has_mdat or not has_audio_track:
         raise _corrupt("audio")
     return bytes(buf), duration_ms
+
+
+def _sanitize_trak(buf: bytearray, start: int, stop: int) -> bool:
+    """Blank track-level metadata; return True for a sound track (``mdia/hdlr`` = ``soun``)."""
+    is_audio = False
+    for pos, header, size, btype in _iter_boxes(buf, start, stop):
+        if btype in _MP4_METADATA_BOXES:
+            _blank_box(buf, pos, header, size)
+        elif btype == b"mdia":
+            for hpos, hheader, hsize, htype in _iter_boxes(buf, pos + header, pos + size):
+                # hdlr payload: version/flags (4), pre_defined (4), handler_type (4)
+                if htype == b"hdlr" and hsize - hheader >= 12:
+                    is_audio |= bytes(buf[hpos + hheader + 8 : hpos + hheader + 12]) == b"soun"
+    return is_audio
 
 
 def _mvhd_duration_ms(buf: bytearray, start: int, stop: int) -> int:
     if start + 4 > stop:
         raise _corrupt("audio")
     version = buf[start]
+    if version not in (0, 1):
+        raise _corrupt("audio")
     if version == 1:
         if start + 32 > stop:
             raise _corrupt("audio")

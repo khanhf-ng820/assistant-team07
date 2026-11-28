@@ -73,26 +73,37 @@ belong to the OCR and voice issues (#48/#49), so this adds no new endpoints:
 - `app/media.py` checks the real file type from the bytes (the client's file
   name and Content-Type are not trusted). Receipts must be one JPEG or PNG of at
   most 5 MB, 32 to 10,000 px per side and at most 40 MP. Voice clips must be
-  M4A (MP4/AAC, what `expo-audio` records), at most 2 MB and 30 seconds. Damaged
+  M4A (MP4/AAC, what `expo-audio` records) with an audio track, at most 2 MB
+  and 30 seconds. Damaged
   files and mismatched declared types are rejected with stable codes such as
   `MEDIA_UNSUPPORTED_TYPE`, `MEDIA_TYPE_MISMATCH`, `MEDIA_CORRUPT` and
   `MEDIA_TOO_LONG`. Metadata is removed before storage: JPEG EXIF/XMP and
-  comments, PNG text/EXIF/time chunks, M4A `udta`/`meta` boxes (blanked in
-  place so audio offsets stay valid). Only the standard library is used.
+  comments (the scan is walked to the real end-of-image marker, so appended
+  data is dropped), PNG text/EXIF/time chunks, M4A `udta`/`meta` boxes in
+  `moov` and each `trak` (blanked in place, 32- and 64-bit sizes, so audio
+  offsets stay valid). Only the standard library is used.
 - `app/media_storage.py` uploads to the private `capture-media` Supabase
   Storage bucket with the backend service-role key, at server-generated paths
-  `{owner_id}/{kind}/{media_id}.{ext}`. Errors never contain keys.
+  `{owner_id}/{kind}/{media_id}.{ext}`. Errors never contain keys. The
+  service-role key is used only for these backend-validated uploads and
+  deletions in the private bucket (plan §6); all other data access goes
+  through the student's JWT and RLS.
   `InMemoryMediaStorage` is used in tests and Local Dev Mode.
 - `app/capture_media.py` (`store_capture_media`, `purge_expired_media`) and
   `InMemoryRepository.create_expense_with_media` store media per student and
   link it to a confirmed expense atomically. Everything must belong to the
-  caller, be unlinked and unexpired, or nothing is written. Retries with the
-  same idempotency key return the same expense. Unconfirmed media and all voice
-  clips expire after 24 hours; confirmed receipts are kept.
+  caller and be unlinked, unexpired and not purged, or nothing is written. A
+  retry must repeat the same payload and exactly the same media set to get the
+  same expense back; anything else is an idempotency conflict. All media is
+  temporary (plan §10): unconfirmed files expire after 24 hours, and confirming
+  an expense makes its files due for deletion at once, keeping only metadata,
+  the hash and the link. Calling `purge_expired_media` on a schedule is left to
+  the capture endpoints (#48/#49).
 
 The database side is `supabase/migrations/20261126000000_capture_media.sql`:
-the `capture_media` table (owner-only RLS, per-kind size/type/duration checks,
-same-owner foreign key to `transactions`), the `confirm_expense_with_media()`
+the `capture_media` table (read-only for students: only the backend's service
+role can register rows; per-kind size/type/duration checks; same-owner foreign
+key to `transactions`), the `confirm_expense_with_media()`
 function that inserts the expense and links its media in one transaction, and
 the private bucket with a read policy limited to the student's own folder.
 

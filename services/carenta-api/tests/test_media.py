@@ -97,3 +97,58 @@ def test_error_messages_are_safe_to_show():
     with pytest.raises(MediaValidationError) as exc:
         sanitize_media("receipt", b"\x00" * 10, "image/png")
     assert exc.value.message == "Expected a JPEG or PNG image."
+
+
+# --- Review fixes (#89) ---------------------------------------------------------
+
+
+def test_jpeg_data_appended_after_end_of_image_is_dropped():
+    hidden = b"\xff\xd8hidden payload " + GPS_MARKER + b"\xff\xd9"
+    result = sanitize_media("receipt", jpeg(trailer=hidden))
+    assert GPS_MARKER not in result.data and b"hidden payload" not in result.data
+    assert result.data == sanitize_media("receipt", jpeg()).data
+
+
+def test_progressive_jpeg_metadata_between_scans_is_dropped():
+    import struct
+
+    def seg(marker, payload):
+        return bytes([0xFF, marker]) + struct.pack(">H", len(payload) + 2) + payload
+
+    base = jpeg(exif=False, comment=False)
+    eoi = base.rindex(b"\xff\xd9")
+    second_scan = seg(0xFE, b"between scans " + GPS_MARKER) + seg(0xDA, b"\x01\x01\x00\x00\x3f\x00") + b"\x9a\xbc"
+    result = sanitize_media("receipt", base[:eoi] + second_scan + base[eoi:])
+    assert GPS_MARKER not in result.data and b"\x9a\xbc" in result.data
+    assert result.data.count(b"\xff\xda") == 2
+
+
+def test_m4a_64bit_metadata_box_is_blanked_without_breaking_size():
+    import struct
+
+    original = m4a(udta_64bit=True)
+    result = sanitize_media("voice", original)
+    assert GPS_MARKER not in result.data and len(result.data) == len(original)
+    pos = original.index(b"udta") - 4
+    size32, kind, largesize = struct.unpack(">I4sQ", result.data[pos : pos + 16])
+    assert (size32, kind) == (1, b"free")
+    assert largesize == struct.unpack(">Q", original[pos + 8 : pos + 16])[0]
+
+
+def test_m4a_track_level_metadata_is_blanked():
+    result = sanitize_media("voice", m4a(metadata=False, trak_metadata=True))
+    assert GPS_MARKER not in result.data
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        m4a(handler=b"vide"),
+        (lambda b: b[: b.index(b"mvhd") + 4] + b"" + b[b.index(b"mvhd") + 5 :])(m4a()),
+        png()[: png().index(b"IDAT") - 4] + png()[-12:],
+    ],
+    ids=["video-only track", "unknown mvhd version", "png without IDAT"],
+)
+def test_structural_rejections(data):
+    kind = "receipt" if data.startswith(b"\x89PNG") else "voice"
+    assert _code(kind, data) == "MEDIA_CORRUPT"

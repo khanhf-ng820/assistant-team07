@@ -83,8 +83,8 @@ def test_confirm_links_receipt_and_voice_to_one_expense(repo, storage):
     linked_receipt = repo.get_media("student-a", receipt.id)
     linked_voice = repo.get_media("student-a", voice.id)
     assert linked_receipt.transaction_id == linked_voice.transaction_id == tx.id
-    assert linked_receipt.expires_at is None  # receipts kept as evidence
-    assert linked_voice.expires_at == voice.expires_at  # voice stays temporary
+    # Plan §10: raw receipts and audio are not kept after success.
+    assert linked_receipt.expires_at == linked_voice.expires_at == NOW
     assert [t.id for t in repo.list_transactions("student-a")] == [tx.id]
 
 
@@ -143,19 +143,21 @@ def test_failed_confirmation_writes_nothing(repo, storage, setup, code):
     assert repo.get_media("student-a", good.id).transaction_id is None
 
 
-def test_purge_removes_expired_objects_and_keeps_linked_receipts(repo, storage):
+def test_purge_removes_confirmed_files_at_once_and_pending_after_expiry(repo, storage):
     pending = store(repo, storage)
     voice = store(repo, storage, kind="voice")
-    kept = store(repo, storage)
-    repo.create_expense_with_media("student-a", expense(), [voice.id, kept.id], now=NOW)
+    receipt = store(repo, storage)
+    repo.create_expense_with_media("student-a", expense(), [voice.id, receipt.id], now=NOW)
 
-    assert purge_expired_media(repo, storage, now=NOW + dt.timedelta(hours=1)) == 0
-    assert purge_expired_media(repo, storage, now=NOW + MEDIA_RETENTION) == 2
+    assert purge_expired_media(repo, storage, now=NOW + dt.timedelta(minutes=1)) == 2
+    assert list(storage.objects) == [pending.storage_path]
+    assert repo.get_media("student-a", receipt.id).purged_at is not None
+    assert purge_expired_media(repo, storage, now=NOW + MEDIA_RETENTION) == 1
 
     assert repo.get_media("student-a", pending.id) is None  # never confirmed: gone
     purged_voice = repo.get_media("student-a", voice.id)
     assert purged_voice.transaction_id and purged_voice.purged_at  # link kept, audio gone
-    assert list(storage.objects) == [kept.storage_path]
+    assert storage.objects == {}
     assert purge_expired_media(repo, storage, now=NOW + 2 * MEDIA_RETENTION) == 0
 
 
@@ -169,3 +171,32 @@ def test_purge_keeps_records_when_storage_delete_fails(repo, storage):
     with pytest.raises(MediaStorageError):
         purge_expired_media(repo, FailingDelete(), now=NOW + MEDIA_RETENTION)
     assert repo.get_media("student-a", pending.id) is not None
+
+
+
+# --- Review fixes (#89) ---------------------------------------------------------
+
+
+@pytest.mark.parametrize("variant", ["subset", "superset", "different"])
+def test_retry_must_repeat_exactly_the_same_media(repo, storage, variant):
+    first, second, other = store(repo, storage), store(repo, storage), store(repo, storage)
+    tx = repo.create_expense_with_media("student-a", expense(), [first.id, second.id], now=NOW)
+    assert repo.create_expense_with_media(
+        "student-a", expense(), [second.id, first.id], now=NOW
+    ).id == tx.id  # same set, any order
+    ids = {"subset": [first.id], "superset": [first.id, second.id, other.id], "different": [other.id]}[variant]
+    with pytest.raises(IdempotencyConflictError):
+        repo.create_expense_with_media("student-a", expense(), ids, now=NOW)
+    assert repo.get_media("student-a", other.id).transaction_id is None
+    assert len(repo.list_transactions("student-a")) == 1
+
+
+def test_purged_media_cannot_be_linked(repo, storage):
+    record = store(repo, storage)
+    from dataclasses import replace
+
+    # Simulate a purge that raced the confirmation: the file is gone, the row remains.
+    repo._ledgers["student-a"].media[record.id] = replace(record, purged_at=NOW)
+    with pytest.raises(MediaLinkError) as exc:
+        repo.create_expense_with_media("student-a", expense(), [record.id], now=NOW)
+    assert exc.value.code == "MEDIA_EXPIRED"

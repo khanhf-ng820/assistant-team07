@@ -50,6 +50,9 @@ def m4a(
     compatible: bytes = b"isom",
     metadata: bool = True,
     mvhd_version: int = 0,
+    handler: bytes = b"soun",
+    trak_metadata: bool = False,
+    udta_64bit: bool = False,
 ) -> bytes:
     def box(btype: bytes, body: bytes) -> bytes:
         return struct.pack(">I", len(body) + 8) + btype + body
@@ -60,9 +63,17 @@ def m4a(
         mvhd = b"\x01\x00\x00\x00" + struct.pack(">QQIQ", 0, 0, timescale, duration) + bytes(80)
     else:
         mvhd = b"\x00\x00\x00\x00" + struct.pack(">IIII", 0, 0, timescale, duration) + bytes(80)
-    moov_children = [box(b"mvhd", mvhd), box(b"trak", box(b"tkhd", bytes(84)))]
+    hdlr = box(b"hdlr", bytes(4) + bytes(4) + handler + bytes(12) + b"SoundHandler\x00")
+    trak_children = [box(b"tkhd", bytes(84)), box(b"mdia", hdlr)]
+    if trak_metadata:
+        trak_children.append(box(b"udta", box(b"\xa9xyz", GPS_MARKER)))
+    moov_children = [box(b"mvhd", mvhd), box(b"trak", b"".join(trak_children))]
     if metadata:
-        moov_children.append(box(b"udta", box(b"\xa9xyz", GPS_MARKER)))
+        udta_body = box(b"\xa9xyz", GPS_MARKER)
+        if udta_64bit:  # size field 1 + 64-bit largesize
+            moov_children.append(struct.pack(">I4sQ", 1, b"udta", len(udta_body) + 16) + udta_body)
+        else:
+            moov_children.append(box(b"udta", udta_body))
     ftyp = box(b"ftyp", brand + b"\x00\x00\x02\x00" + brand + compatible)
     moov = box(b"moov", b"".join(moov_children))
     mdat = box(b"mdat", b"\x21\x10\x05\x45" * 64)

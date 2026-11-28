@@ -12,11 +12,12 @@ import datetime as dt
 import uuid
 
 from app.media import MediaKind, sanitize_media
-from app.media_storage import MediaStorage, build_object_path
+from app.media_storage import MediaStorage, MediaStorageError, build_object_path
 from app.repository import InMemoryRepository, MediaRecord
 
-# Unconfirmed media and all voice clips are temporary (plan §11: voice is only
-# needed until the draft is reviewed). Confirmed receipts are kept as evidence.
+# All capture media is temporary (plan §10: do not store raw receipts or audio
+# by default). Unconfirmed files expire after this window; confirming an expense
+# makes its files due for deletion at once, keeping only metadata and the link.
 MEDIA_RETENTION = dt.timedelta(hours=24)
 
 
@@ -60,7 +61,10 @@ def store_capture_media(
             )
         )
     except Exception:
-        storage.delete([path])
+        try:
+            storage.delete([path])
+        except MediaStorageError:
+            pass  # keep the original error; the object stays orphaned (no record to purge it)
         raise
 
 

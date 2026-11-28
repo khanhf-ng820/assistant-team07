@@ -20,6 +20,7 @@ from app.budget import (
     calculate_goal_projection,
     calculate_safe_to_spend,
 )
+from app.media import MediaKind
 from app.schemas import (
     BudgetSummaryResponse,
     GoalCreate,
@@ -75,7 +76,7 @@ class MediaRecord:
 
     id: str
     owner_id: str
-    kind: str
+    kind: MediaKind
     mime_type: str
     size_bytes: int
     sha256: str
@@ -231,8 +232,11 @@ class InMemoryRepository:
         """Atomically record a confirmed expense and link its receipt/voice media.
 
         Mirrors ``public.confirm_expense_with_media``: every media item must belong
-        to the caller, be unlinked and unexpired, or nothing is written. A retry
-        with the same idempotency key and media returns the original transaction.
+        to the caller, be unlinked, unexpired and not purged, or nothing is written.
+        A retry with the same idempotency key, payload and exactly the same media
+        set returns the original transaction; any other set is a conflict. Linked
+        media becomes due for deletion at once (plan §10: do not keep raw receipts
+        or audio after success); the record keeps the link and the file hash.
         """
         owner_id = _require_owner_id(user_id)
         current = now or dt.datetime.now(dt.timezone.utc)
@@ -250,7 +254,8 @@ class InMemoryRepository:
 
             existing = self._existing_for_key(ledger, data)
             if existing is not None:
-                if all(item.transaction_id == existing["id"] for item in items):
+                attached = {m.id for m in ledger.media.values() if m.transaction_id == existing["id"]}
+                if attached == set(wanted):
                     return TransactionResponse(**dict(existing))
                 raise IdempotencyConflictError(
                     "Idempotency key conflict: payload does not match the original transaction"
@@ -261,7 +266,9 @@ class InMemoryRepository:
                     raise MediaLinkError(
                         "MEDIA_ALREADY_LINKED", "Capture media is already attached to an expense."
                     )
-                if item.expires_at is not None and item.expires_at <= current:
+                if item.purged_at is not None or (
+                    item.expires_at is not None and item.expires_at <= current
+                ):
                     raise MediaLinkError("MEDIA_EXPIRED", "Capture media has expired; capture it again.")
 
             snapshot, _ = self._create_transaction_locked(ledger, data)
@@ -270,8 +277,7 @@ class InMemoryRepository:
                     item,
                     transaction_id=snapshot["id"],
                     linked_at=current,
-                    # Receipts are kept as evidence; voice clips stay temporary.
-                    expires_at=None if item.kind == "receipt" else item.expires_at,
+                    expires_at=current,  # plan §10: purge the file once the expense is saved
                 )
         return TransactionResponse(**snapshot)
 

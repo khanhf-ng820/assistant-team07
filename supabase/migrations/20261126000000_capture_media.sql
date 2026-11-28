@@ -5,6 +5,8 @@
 -- validated and stripped metadata (services/carenta-api/app/media.py). This
 -- table records their metadata per owner and links them to the confirmed
 -- expense in one database transaction via public.confirm_expense_with_media().
+-- Media is temporary (plan §10): once an expense is confirmed its files become
+-- due for deletion; the row keeps only metadata, the hash and the link.
 
 -- Linked media must reference a transaction of the same owner.
 alter table public.transactions
@@ -25,6 +27,7 @@ create table public.capture_media (
   sha256 text not null check (sha256 ~ '^[0-9a-f]{64}$'),
   width integer check (width is null or width between 32 and 10000),
   height integer check (height is null or height between 32 and 10000),
+  check (width is null or height is null or width::bigint * height <= 40000000),
   duration_ms integer check (duration_ms is null or duration_ms between 0 and 30500),
   transaction_id uuid,
   linked_at timestamptz,
@@ -52,15 +55,16 @@ create index capture_media_expiry_idx on public.capture_media (expires_at)
   where expires_at is not null and purged_at is null;
 
 alter table public.capture_media enable row level security;
-revoke all on public.capture_media from anon;
+-- Clients are read-only. Rows are registered only by the backend (service role)
+-- after sanitize_media() and the Storage upload succeed, so a student JWT can
+-- never invent metadata (size, hash, path, expiry) that confirmation would trust.
+revoke all on public.capture_media from anon, authenticated;
+grant select on public.capture_media to authenticated;
 
 create policy "capture_media: owner can read" on public.capture_media
   for select to authenticated using (owner_id = (select auth.uid()));
-create policy "capture_media: owner can insert unlinked" on public.capture_media
-  for insert to authenticated
-  with check (owner_id = (select auth.uid()) and transaction_id is null and linked_at is null);
--- No update/delete policies: linking goes through confirm_expense_with_media(),
--- and expiry/purging is done by the backend with the service role.
+-- No insert/update/delete policies: registration and purging use the service
+-- role, and linking goes through confirm_expense_with_media().
 
 -- ---------------------------------------------------------------------------
 -- Atomic confirm: insert the expense and link its media, or do nothing.
@@ -93,6 +97,9 @@ begin
   if p_source not in ('receipt', 'voice') then
     raise exception 'source must be receipt or voice' using errcode = 'check_violation';
   end if;
+  if p_media_ids is null or array_position(p_media_ids, null) is not null then
+    raise exception 'media ids must not be null' using errcode = 'check_violation';
+  end if;
   select count(distinct m) into v_wanted from unnest(p_media_ids) as m;
   if v_wanted = 0 then
     raise exception 'at least one capture media item is required' using errcode = 'check_violation';
@@ -108,7 +115,8 @@ begin
     raise exception 'capture media not found' using errcode = 'no_data_found';
   end if;
 
-  -- Idempotent retry: same key and media already linked to that transaction.
+  -- Idempotent retry: same key, same payload (including source) and exactly the
+  -- same media set already linked to that transaction.
   select id into v_tx_id from public.transactions
     where owner_id = v_owner and idempotency_key = p_idempotency_key;
   if v_tx_id is not null then
@@ -116,14 +124,15 @@ begin
       select 1 from public.transactions
       where id = v_tx_id and kind = 'expense' and amount_vnd = p_amount_vnd
         and category = p_category and occurred_on = p_occurred_on
-        and note is not distinct from p_note
+        and note is not distinct from p_note and source = p_source
     ) then
       raise exception 'idempotency key already used with a different payload'
         using errcode = 'unique_violation';
     end if;
+    -- Mismatch = attached to v_tx_id but not requested, or requested but not attached.
     select count(*) into v_linked_elsewhere from public.capture_media
-      where owner_id = v_owner and id = any (p_media_ids)
-        and transaction_id is distinct from v_tx_id;
+      where owner_id = v_owner
+        and coalesce(transaction_id = v_tx_id, false) <> (id = any (p_media_ids));
     if v_linked_elsewhere > 0 then
       raise exception 'idempotency key already used for a different confirmation'
         using errcode = 'unique_violation';
@@ -134,9 +143,10 @@ begin
   if exists (
     select 1 from public.capture_media
     where owner_id = v_owner and id = any (p_media_ids)
-      and (transaction_id is not null or (expires_at is not null and expires_at <= now()))
+      and (transaction_id is not null or purged_at is not null
+           or (expires_at is not null and expires_at <= now()))
   ) then
-    raise exception 'capture media is already linked or has expired' using errcode = 'check_violation';
+    raise exception 'capture media is already linked, purged or expired' using errcode = 'check_violation';
   end if;
 
   insert into public.transactions
@@ -148,8 +158,8 @@ begin
   update public.capture_media
     set transaction_id = v_tx_id,
         linked_at = now(),
-        -- Receipts are kept as evidence; voice clips stay temporary.
-        expires_at = case when kind = 'receipt' then null else expires_at end
+        -- Plan §10: do not keep raw receipts or audio after success.
+        expires_at = now()
     where owner_id = v_owner and id = any (p_media_ids);
 
   return v_tx_id;
