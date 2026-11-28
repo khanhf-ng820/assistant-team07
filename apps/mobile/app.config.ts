@@ -9,7 +9,19 @@ const config: ExpoConfig = {
   userInterfaceStyle: 'light',
   platforms: ['android', 'ios'],
   icon: './assets/icon.png',
-  plugins: ['expo-router', 'expo-secure-store'],
+  plugins: [
+    'expo-router',
+    'expo-secure-store',
+    [
+      'expo-audio',
+      {
+        microphonePermission:
+          'CARENTA cần quyền truy cập micro để ghi âm khoản chi bằng giọng nói.',
+        recordAudioAndroid: true,
+        enableBackgroundRecording: false,
+      },
+    ],
+  ],
 };
 
 export default config;
