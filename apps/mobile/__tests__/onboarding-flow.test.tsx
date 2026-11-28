@@ -118,10 +118,12 @@ describe('FinancialOnboardingScreen Flow (Slice 4 #54)', () => {
     expect(screen.getByTestId('ledger-goal-title')).toHaveTextContent('Laptop học tập');
   });
 
-  it('surfaces explicit shortfall banner when commitments and goal exceed allowance', async () => {
+  it('surfaces explicit shortfall banner and preserves 0 VND daily allowance when finished', async () => {
+    const onComplete = jest.fn();
+
     await render(
       <LedgerProvider>
-        <FinancialOnboardingScreen today="2026-07-12" />
+        <OnboardingHarness today="2026-07-12" onComplete={onComplete} />
       </LedgerProvider>
     );
 
@@ -134,5 +136,12 @@ describe('FinancialOnboardingScreen Flow (Slice 4 #54)', () => {
 
     await fireEvent.press(screen.getByTestId('deadline-preset-1m'));
     expect(screen.getByTestId('onboarding-shortfall-banner')).toBeVisible();
+    expect(screen.getByTestId('onboarding-daily-allowance')).toHaveTextContent('0 ₫');
+
+    await fireEvent.press(screen.getByTestId('onboarding-finish-button'));
+
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('ledger-daily-limit')).toHaveTextContent('0');
+    expect(screen.getByTestId('ledger-balance')).toHaveTextContent('2000000');
   });
 });

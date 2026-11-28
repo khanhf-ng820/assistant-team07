@@ -119,9 +119,7 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
 
       setOnboardingProfile(profile);
       setAvailableBalance(profile.monthlyAllowanceVnd);
-      setDailyBudgetLimit(
-        preview.dailyAllowanceVnd > 0 ? preview.dailyAllowanceVnd : DAILY_BUDGET_LIMIT
-      );
+      setDailyBudgetLimit(Math.max(0, preview.dailyAllowanceVnd));
     },
     []
   );
