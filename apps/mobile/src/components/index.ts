@@ -5,3 +5,5 @@ export * from './Card';
 export * from './Header';
 export * from './PlaceholderScreen';
 export * from './Toast';
+export * from './onboarding/FinancialOnboardingScreen';
+export * from './onboarding/GoalDeadlinePickerModal';

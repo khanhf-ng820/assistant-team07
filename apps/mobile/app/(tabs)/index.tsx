@@ -57,8 +57,11 @@ export default function StatsScreen() {
         showsVerticalScrollIndicator={false}
         testID="stats-screen-scroll"
       >
-        {/* Top Greeting & Recorded Balance Header */}
-        <GreetingHeader userName="Minh" />
+        {/* Top Greeting & Recorded Balance Header (wallet opens financial onboarding) */}
+        <GreetingHeader
+          userName="Minh"
+          onWalletPress={() => router.push('/onboarding')}
+        />
 
         {/* Compact Calendar */}
         <MonthCalendar
