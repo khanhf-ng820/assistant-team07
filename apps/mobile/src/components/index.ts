@@ -5,3 +5,6 @@ export * from './Card';
 export * from './Header';
 export * from './PlaceholderScreen';
 export * from './Toast';
+export * from './ai-confirmation/AIConfirmationCard';
+export * from './ai-confirmation/AiConfirmationModal';
+export * from './ai-confirmation/QuickEditModal';

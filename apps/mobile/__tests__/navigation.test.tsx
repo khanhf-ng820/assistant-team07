@@ -4,6 +4,7 @@ import TabsLayout from '../app/(tabs)/_layout';
 import StatsScreen from '../app/(tabs)/index';
 import SavingsScreen from '../app/(tabs)/savings';
 import CalendarDetailScreen from '../app/calendar-detail';
+import CaptureConfirmScreen from '../app/capture/confirm';
 
 const routes = {
   _layout: RootLayout,
@@ -11,6 +12,7 @@ const routes = {
   '(tabs)/index': StatsScreen,
   '(tabs)/savings': SavingsScreen,
   'calendar-detail': CalendarDetailScreen,
+  'capture/confirm': CaptureConfirmScreen,
 };
 
 it('starts on Stats and switches between exactly two tabs', async () => {
@@ -60,5 +62,14 @@ it('navigates from StatsScreen to calendar-detail and returns', async () => {
   expect(screen.getByTestId('monthly-budget-summary-card')).toBeVisible();
 
   await fireEvent.press(screen.getByTestId('calendar-back-button'));
+  expect(screen.getByTestId('greeting-header')).toBeVisible();
+});
+
+it('handles empty /capture/confirm route and navigates back to Stats landing view', async () => {
+  await renderRouter(routes, { initialUrl: '/capture/confirm' });
+  expect(screen.getByText('Chưa có bản nháp cần xác nhận')).toBeVisible();
+
+  await fireEvent.press(screen.getByTestId('confirm-empty-back-button'));
+  expect(screen.getByRole('tab', { name: 'Thống kê' })).toBeSelected();
   expect(screen.getByTestId('greeting-header')).toBeVisible();
 });

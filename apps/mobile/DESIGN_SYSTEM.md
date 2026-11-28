@@ -186,6 +186,12 @@ import { useLedger } from '../context/LedgerContext';
 />
 ```
 
+### `<AIConfirmationCard>` & `<QuickEditModal>` (Issue #50)
+Shared human-in-the-loop review card for OCR and Voice drafts (`src/types/aiDraft.ts`):
+- Uses `colors.text` (`#0F172A`) on `colors.successSoft`, `colors.warningSoft`, and `colors.dangerSoft` for WCAG AAA badge contrast.
+- Displays deterministic post-purchase preview (`Còn ... sau khoản chi này`), qualitative uncertainty warnings, and same-day duplicate notices without blocking valid repeat purchases.
+- `[Sửa nhanh]` opens `QuickEditModal` (`accessibilityViewIsModal`, `VirtualNumpad`, `CategoryPickerModal`) and updates only the local draft (`draftId` preserved) until `[Xác nhận]` persists to `LedgerContext` and returns to `Thống kê`.
+
 ---
 
 ## 6. Bottom Navigation Bar Architecture (`_layout.tsx`)

@@ -5,6 +5,8 @@ import { Button } from '../src/components/Button';
 import { CaptureChooser } from '../src/components/CaptureChooser';
 import { Header } from '../src/components/Header';
 import { TOAST_BADGE_CONFIG, Toast, type ToastType } from '../src/components/Toast';
+import { AIConfirmationCard } from '../src/components/ai-confirmation/AIConfirmationCard';
+import { QuickEditModal } from '../src/components/ai-confirmation/QuickEditModal';
 import { colors } from '../src/theme';
 
 /**
@@ -76,6 +78,13 @@ describe('WCAG 2.1 AA Color Contrast Audit', () => {
       expect(ratio).toBeGreaterThanOrEqual(4.5);
     }
   );
+
+  it('AI confirmation status badges and source tag meet WCAG AA contrast (>= 4.5:1)', () => {
+    expect(getContrastRatio(colors.primaryDark, colors.primaryLight)).toBeGreaterThanOrEqual(4.5);
+    expect(getContrastRatio(colors.text, colors.successSoft)).toBeGreaterThanOrEqual(4.5);
+    expect(getContrastRatio(colors.text, colors.warningSoft)).toBeGreaterThanOrEqual(4.5);
+    expect(getContrastRatio(colors.text, colors.dangerSoft)).toBeGreaterThanOrEqual(4.5);
+  });
 });
 
 describe('Touch Target Compliance (>= 48x48dp)', () => {
@@ -145,5 +154,49 @@ describe('Accessibility Roles & Screen Reader Attributes', () => {
     const toast = getByTestId('a11y-toast');
     expect(toast.props.accessibilityRole).toBe('alert');
     expect(toast.props.accessibilityLiveRegion).toBe('assertive');
+  });
+
+  it('AIConfirmationCard alerts and QuickEditModal expose screen-reader modal/alert roles and >= 48dp buttons', async () => {
+    const sampleDraft = {
+      draftId: 'a11y-draft-1',
+      source: 'ocr' as const,
+      amount: null,
+      categoryId: null,
+      merchant: 'Highlands',
+      note: 'Cà phê',
+      date: '2024-07-10',
+      time: null,
+    };
+
+    const { getByTestId } = await render(
+      <>
+        <AIConfirmationCard
+          draft={sampleDraft}
+          priorDaySpent={0}
+          dailyBudgetLimit={280000}
+          existingTransactions={[]}
+          onConfirm={jest.fn()}
+          onQuickEdit={jest.fn()}
+        />
+        <QuickEditModal
+          visible
+          draft={{ ...sampleDraft, amount: 45000, categoryId: 'food' }}
+          dailyBudgetLimit={280000}
+          getSpentForDate={() => 0}
+          onApply={jest.fn()}
+          onClose={jest.fn()}
+        />
+      </>
+    );
+
+    expect(getByTestId('ai-confirm-missing-banner').props.accessibilityRole).toBe('alert');
+    const modalRoot = getByTestId('quick-edit-modal').children[0];
+    expect(typeof modalRoot !== 'string' && modalRoot.props.accessibilityViewIsModal).toBe(true);
+
+    for (const id of ['ai-quick-edit-button', 'ai-confirm-submit-button']) {
+      const flat = StyleSheet.flatten(getByTestId(id).props.style);
+      expect(flat.minHeight).toBeGreaterThanOrEqual(48);
+      expect(flat.minWidth).toBeGreaterThanOrEqual(48);
+    }
   });
 });
