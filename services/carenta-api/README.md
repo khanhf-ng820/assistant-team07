@@ -10,14 +10,16 @@ Implements the 100% deterministic budget calculation engine (zero LLM math) and 
 - **Savings Goal Projection:** Suggests daily savings contribution rate based on remaining target and deadline.
 - **Transaction CRUD:** Supports paginated and date-filtered reads and idempotent writes (`idempotency_key`).
 - **JWT Verification & Request Correlation:** Verifies Supabase Bearer JWTs on `/api/v1/auth/me` (`app/auth.py`), supports explicit opt-in Local Dev Mode when Supabase env vars are unset, and attaches `X-Request-ID` + structured `{ "error": { "code", "message", "request_id" } }` error responses (`app/errors.py`).
+- **In-Process Scheduler & Assistant Orchestration (Issues #59, #117–#121):** Opt-in `asyncio` scheduler managed in FastAPI `lifespan` (`app/scheduler.py`) plus unified **Assistant Snapshot**, revision-keyed insight cache with deterministic Vietnamese fallback, and non-mutating **Proactive Trigger** lifecycle (`app/orchestrator.py`).
 - **Dual Routing:** Endpoints are accessible via both `/api/v1` and `/v1`.
 
 ## Endpoints
 
 - `GET /health`: Public service health check (`{"status":"ok","service":"carenta-api"}`).
+- `GET /ready`: Secret-free deployment readiness summary (`auth_mode`, scheduler status, insight provider mode, subsystem checks).
 - `GET /api/v1/auth/me` (and `/v1/auth/me`): Authenticated Student Identity probe (`app/auth.py`).
 - `GET /api/v1/transactions` (and `/v1/transactions`): List transactions with date and kind filtering.
-- `POST /api/v1/transactions`: Create a transaction (requires `idempotency_key`, returns 409 when the key is reused with a different amount, kind, category, date, or note).
+- `POST /api/v1/transactions`: Create a transaction (requires `idempotency_key`, returns 409 when the key is reused with a different amount, kind, category, date, or note); updates `ledger_revision`, resolves today's evening reminder on expense entry, and refreshes overspending alerts.
 - `GET /api/v1/budget/summary`: Budget summary including Safe-to-Spend, daily allowance, and recovered subsequent limits.
 - `GET /api/v1/goals`: List saving goals.
 - `POST /api/v1/goal` (alias `POST /api/v1/goals`): Create the single active goal. Rejects client-supplied balances (422) and returns 409 if a goal is already active, so saved money is never dropped.
@@ -25,6 +27,12 @@ Implements the 100% deterministic budget calculation engine (zero LLM math) and 
 - `PATCH /api/v1/goal`: Update goal parameters while preserving allocated savings.
 - `POST /api/v1/goal/allocate`: Allocate virtual savings into goal. Moves value out of `savings_reserved` first (plan §7); only the part above the reserve lowers Safe-to-Spend.
 - `POST /api/v1/budget/config`: Set `opening_balance`, `unpaid_commitments`, `savings_reserved` (Phase 1 development helper).
+- `GET /api/v1/assistant/snapshot`: Unified read-only Assistant Snapshot (`budget_summary`, revision-cached `insight`, ordered `active_triggers`, `habit_candidate`, `ledger_revision`, `evaluated_at`).
+- `GET /api/v1/assistant/triggers`: Active Proactive Triggers for the authenticated Student Identity.
+- `POST /api/v1/assistant/triggers/{trigger_id}/dismiss`: Dismiss an active Proactive Trigger (returns `404 TRIGGER_NOT_FOUND` across users; applies a 7-day cooldown to habit suggestions).
+- `POST /api/v1/jobs/{job_name}/run` (`evening_reminder` | `habit_analysis`): Idempotently run a scheduled check for the authenticated Student Identity (`Asia/Ho_Chi_Minh` local date).
+- `GET /api/v1/jobs/status`: Scheduler status and latest Scheduled Job Run summaries for the authenticated Student Identity.
+- `POST /api/v1/internal/jobs/{job_name}/run`: Internal cron sweep across all known Student Identities, guarded by constant-time `X-Scheduler-Secret` matching `CARENTA_SCHEDULER_SECRET` (fails closed with `503` when unset or `403` when missing/invalid).
 
 Interactive OpenAPI documentation is available at `http://localhost:8000/docs`.
 
@@ -38,6 +46,14 @@ uv run --project services/carenta-api --env-file services/carenta-api/.env uvico
 Phase 1 financial routes enforce `get_current_identity` and isolate state per `Student Identity` (`user_id`) inside `InMemoryRepository` (mirroring `#42`'s `owner_id` invariants); live Supabase Postgres persistence is tracked separately. There is no Gemini integration or media upload yet. `days_remaining` is derived from `today` in Asia/Ho_Chi_Minh (inclusive to month-end); use the `days_remaining` query parameter on `/budget/summary` to override it per request.
 
 For unauthenticated LAN testing without Supabase env vars configured, set `CARENTA_LOCAL_DEV_AUTH=true` in `.env` (automatically ignored whenever `SUPABASE_URL` or `SUPABASE_JWT_SECRET` is set).
+
+### Background scheduler environment variables
+
+- `CARENTA_SCHEDULER_ENABLED` (`false` default): Enable the in-process `asyncio` scheduler loop inside FastAPI `lifespan`.
+- `CARENTA_SCHEDULER_POLL_SECONDS` (`60` default): Poll interval in seconds.
+- `CARENTA_EVENING_REMINDER_TIME` (`20:00` default, `Asia/Ho_Chi_Minh`): Local cutoff after which evening check-in reminders evaluate.
+- `CARENTA_HABIT_ANALYSIS_TIME` (`07:30` default, `Asia/Ho_Chi_Minh`): Local cutoff after which daily habit analysis evaluates.
+- `CARENTA_SCHEDULER_SECRET` (unset by default): Backend-only `SecretStr` required in `X-Scheduler-Secret` for `POST /api/v1/internal/jobs/{job_name}/run`; internal sweeps fail closed (`503`) when unset and (`403`) when invalid.
 
 ## Database schema and secrets (issue #42)
 

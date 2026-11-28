@@ -27,3 +27,15 @@ _Avoid_: Balance, Free cash
 **Protected Funds**:
 The integer VND sum of unpaid commitments, allocated piggy-bank savings, and reserved period savings shielded from daily spending.
 _Avoid_: Locked balance, Reserve pool
+
+**Assistant Snapshot**:
+A read-only, server-assembled view for one Student Identity combining their current budget state, revision-scoped coaching insight, recurring habit candidate, and active Proactive Triggers.
+_Avoid_: API gateway payload, Chatbot response
+
+**Proactive Trigger**:
+A server-evaluated, non-mutating prompt alerting a Student Identity to today's overspending, a missing evening expense entry, or a recurring spending habit, paired with an allowlisted in-app action; it never records a transaction automatically.
+_Avoid_: Push notification, Auto-action
+
+**Scheduled Job Run**:
+An idempotent execution record for a periodic backend check (evening check-in or daily habit analysis) deduplicated per Student Identity and Asia/Ho_Chi_Minh local date.
+_Avoid_: Cron ping, Worker task

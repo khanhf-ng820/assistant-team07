@@ -116,6 +116,104 @@ export interface BudgetConfigResponse {
   message: string;
 }
 
+export type JobName = 'evening_reminder' | 'habit_analysis';
+
+export type ProactiveTriggerKind =
+  | 'overspending_warning'
+  | 'evening_reminder'
+  | 'habit_suggestion';
+
+export type ProactiveTriggerAction =
+  | 'open_budget_recovery'
+  | 'open_manual_entry'
+  | 'open_stats'
+  | 'open_habit_review';
+
+export interface HabitCandidate {
+  id: string;
+  date: string;
+  amount: number;
+  category: string;
+  note: string;
+  confidence: number;
+  matching_days: number;
+}
+
+export interface ProactiveTrigger {
+  id: string;
+  kind: ProactiveTriggerKind;
+  title: string;
+  message: string;
+  action_target: ProactiveTriggerAction;
+  local_date: string;
+  amount_vnd?: number | null;
+  habit_candidate?: HabitCandidate | null;
+  created_at: string;
+}
+
+export interface ProactiveTriggerListResponse {
+  items: ProactiveTrigger[];
+  total: number;
+}
+
+export interface TriggerDismissResponse {
+  trigger_id: string;
+  status: 'dismissed';
+  cooldown_until?: string | null;
+}
+
+export interface AssistantInsight {
+  summary: string;
+  source: 'provider' | 'deterministic_fallback';
+  ledger_revision: number;
+  generated_at: string;
+}
+
+export interface AssistantSnapshotResponse {
+  budget_summary: BudgetSummaryResponse;
+  insight: AssistantInsight;
+  active_triggers: ProactiveTrigger[];
+  habit_candidate?: HabitCandidate | null;
+  ledger_revision: number;
+  evaluated_at: string;
+}
+
+export type ScheduledJobRunStatus = 'executed' | 'deduplicated' | 'skipped_no_action';
+
+export interface ScheduledJobRunResponse {
+  job_name: JobName;
+  local_date: string;
+  status: ScheduledJobRunStatus;
+  triggers_emitted: number;
+  owners_evaluated: number;
+  executed_at: string;
+}
+
+export interface JobScheduleSummary {
+  job_name: JobName;
+  scheduled_time_local: string;
+  last_run_date?: string | null;
+  last_status?: ScheduledJobRunStatus | null;
+  last_executed_at?: string | null;
+}
+
+export interface JobStatusResponse {
+  scheduler_enabled: boolean;
+  scheduler_running: boolean;
+  timezone: 'Asia/Ho_Chi_Minh';
+  jobs: JobScheduleSummary[];
+}
+
+export interface ReadinessResponse {
+  status: 'ready' | 'degraded';
+  service: 'carenta-api';
+  auth_mode: 'supabase_jwt' | 'local_dev' | 'fail_closed_unconfigured';
+  scheduler_enabled: boolean;
+  scheduler_running: boolean;
+  insight_provider: 'configured' | 'deterministic_fallback';
+  subsystems: Record<string, string>;
+}
+
 function unexpected(message: string): never {
   throw new ApiError({
     code: 'UNEXPECTED_RESPONSE',
@@ -285,5 +383,254 @@ export function parseBudgetConfigResponse(body: unknown): BudgetConfigResponse {
   return {
     status: asString(obj, 'status', 'BudgetConfigResponse'),
     message: asString(obj, 'message', 'BudgetConfigResponse'),
+  };
+}
+
+const VALID_TRIGGER_KINDS: readonly ProactiveTriggerKind[] = [
+  'overspending_warning',
+  'evening_reminder',
+  'habit_suggestion',
+];
+
+const VALID_TRIGGER_ACTIONS: readonly ProactiveTriggerAction[] = [
+  'open_budget_recovery',
+  'open_manual_entry',
+  'open_stats',
+  'open_habit_review',
+];
+
+const VALID_JOB_NAMES: readonly JobName[] = ['evening_reminder', 'habit_analysis'];
+
+const VALID_JOB_STATUSES: readonly ScheduledJobRunStatus[] = [
+  'executed',
+  'deduplicated',
+  'skipped_no_action',
+];
+
+function asFiniteNumber(obj: Record<string, unknown>, field: string, label: string): number {
+  const val = obj[field];
+  if (typeof val !== 'number' || !Number.isFinite(val)) {
+    unexpected(`Expected finite number ${label}.${field}`);
+  }
+  return val;
+}
+
+function asNullableSafeInteger(
+  obj: Record<string, unknown>,
+  field: string,
+  label: string
+): number | null {
+  const val = obj[field];
+  if (val === undefined || val === null) {
+    return null;
+  }
+  if (typeof val !== 'number' || !Number.isSafeInteger(val)) {
+    unexpected(`Expected nullable integer ${label}.${field}`);
+  }
+  return val;
+}
+
+export function parseHabitCandidate(body: unknown): HabitCandidate {
+  const obj = asRecord(body, 'HabitCandidate');
+  const amount = asSafeInteger(obj, 'amount', 'HabitCandidate');
+  const confidence = asFiniteNumber(obj, 'confidence', 'HabitCandidate');
+  const matchingDays = asSafeInteger(obj, 'matching_days', 'HabitCandidate');
+  if (amount <= 0) {
+    unexpected('Expected positive HabitCandidate.amount');
+  }
+  if (confidence < 0 || confidence > 1) {
+    unexpected('Expected HabitCandidate.confidence between 0 and 1');
+  }
+  if (matchingDays < 1 || matchingDays > 31) {
+    unexpected('Expected HabitCandidate.matching_days between 1 and 31');
+  }
+  return {
+    id: asString(obj, 'id', 'HabitCandidate'),
+    date: asString(obj, 'date', 'HabitCandidate'),
+    amount,
+    category: asString(obj, 'category', 'HabitCandidate'),
+    note: asString(obj, 'note', 'HabitCandidate'),
+    confidence,
+    matching_days: matchingDays,
+  };
+}
+
+export function parseProactiveTrigger(body: unknown): ProactiveTrigger {
+  const obj = asRecord(body, 'ProactiveTrigger');
+  const kind = asString(obj, 'kind', 'ProactiveTrigger');
+  if (!VALID_TRIGGER_KINDS.includes(kind as ProactiveTriggerKind)) {
+    unexpected('Expected valid ProactiveTrigger.kind');
+  }
+  const actionTarget = asString(obj, 'action_target', 'ProactiveTrigger');
+  if (!VALID_TRIGGER_ACTIONS.includes(actionTarget as ProactiveTriggerAction)) {
+    unexpected('Expected allowlisted ProactiveTrigger.action_target');
+  }
+  const amountVnd = asNullableSafeInteger(obj, 'amount_vnd', 'ProactiveTrigger');
+  if (amountVnd !== null && amountVnd < 0) {
+    unexpected('Expected non-negative ProactiveTrigger.amount_vnd');
+  }
+  const habitCandidate =
+    obj.habit_candidate === undefined || obj.habit_candidate === null
+      ? null
+      : parseHabitCandidate(obj.habit_candidate);
+
+  return {
+    id: asString(obj, 'id', 'ProactiveTrigger'),
+    kind: kind as ProactiveTriggerKind,
+    title: asString(obj, 'title', 'ProactiveTrigger'),
+    message: asString(obj, 'message', 'ProactiveTrigger'),
+    action_target: actionTarget as ProactiveTriggerAction,
+    local_date: asString(obj, 'local_date', 'ProactiveTrigger'),
+    amount_vnd: amountVnd,
+    habit_candidate: habitCandidate,
+    created_at: asString(obj, 'created_at', 'ProactiveTrigger'),
+  };
+}
+
+export function parseProactiveTriggerListResponse(body: unknown): ProactiveTriggerListResponse {
+  const obj = asRecord(body, 'ProactiveTriggerListResponse');
+  if (!Array.isArray(obj.items)) {
+    unexpected('Expected array ProactiveTriggerListResponse.items');
+  }
+  return {
+    items: obj.items.map(parseProactiveTrigger),
+    total: asSafeInteger(obj, 'total', 'ProactiveTriggerListResponse'),
+  };
+}
+
+export function parseTriggerDismissResponse(body: unknown): TriggerDismissResponse {
+  const obj = asRecord(body, 'TriggerDismissResponse');
+  if (obj.status !== 'dismissed') {
+    unexpected('Expected TriggerDismissResponse.status to be dismissed');
+  }
+  return {
+    trigger_id: asString(obj, 'trigger_id', 'TriggerDismissResponse'),
+    status: 'dismissed',
+    cooldown_until: asNullableString(obj, 'cooldown_until', 'TriggerDismissResponse') ?? null,
+  };
+}
+
+export function parseAssistantInsight(body: unknown): AssistantInsight {
+  const obj = asRecord(body, 'AssistantInsight');
+  const source = obj.source;
+  if (source !== 'provider' && source !== 'deterministic_fallback') {
+    unexpected('Expected valid AssistantInsight.source');
+  }
+  return {
+    summary: asString(obj, 'summary', 'AssistantInsight'),
+    source,
+    ledger_revision: asSafeInteger(obj, 'ledger_revision', 'AssistantInsight'),
+    generated_at: asString(obj, 'generated_at', 'AssistantInsight'),
+  };
+}
+
+export function parseAssistantSnapshotResponse(body: unknown): AssistantSnapshotResponse {
+  const obj = asRecord(body, 'AssistantSnapshotResponse');
+  if (!Array.isArray(obj.active_triggers)) {
+    unexpected('Expected array AssistantSnapshotResponse.active_triggers');
+  }
+  const habitCandidate =
+    obj.habit_candidate === undefined || obj.habit_candidate === null
+      ? null
+      : parseHabitCandidate(obj.habit_candidate);
+  return {
+    budget_summary: parseBudgetSummary(obj.budget_summary),
+    insight: parseAssistantInsight(obj.insight),
+    active_triggers: obj.active_triggers.map(parseProactiveTrigger),
+    habit_candidate: habitCandidate,
+    ledger_revision: asSafeInteger(obj, 'ledger_revision', 'AssistantSnapshotResponse'),
+    evaluated_at: asString(obj, 'evaluated_at', 'AssistantSnapshotResponse'),
+  };
+}
+
+export function parseScheduledJobRunResponse(body: unknown): ScheduledJobRunResponse {
+  const obj = asRecord(body, 'ScheduledJobRunResponse');
+  const jobName = asString(obj, 'job_name', 'ScheduledJobRunResponse');
+  if (!VALID_JOB_NAMES.includes(jobName as JobName)) {
+    unexpected('Expected valid ScheduledJobRunResponse.job_name');
+  }
+  const status = asString(obj, 'status', 'ScheduledJobRunResponse');
+  if (!VALID_JOB_STATUSES.includes(status as ScheduledJobRunStatus)) {
+    unexpected('Expected valid ScheduledJobRunResponse.status');
+  }
+  return {
+    job_name: jobName as JobName,
+    local_date: asString(obj, 'local_date', 'ScheduledJobRunResponse'),
+    status: status as ScheduledJobRunStatus,
+    triggers_emitted: asSafeInteger(obj, 'triggers_emitted', 'ScheduledJobRunResponse'),
+    owners_evaluated: asSafeInteger(obj, 'owners_evaluated', 'ScheduledJobRunResponse'),
+    executed_at: asString(obj, 'executed_at', 'ScheduledJobRunResponse'),
+  };
+}
+
+function parseJobScheduleSummary(body: unknown): JobScheduleSummary {
+  const obj = asRecord(body, 'JobScheduleSummary');
+  const jobName = asString(obj, 'job_name', 'JobScheduleSummary');
+  if (!VALID_JOB_NAMES.includes(jobName as JobName)) {
+    unexpected('Expected valid JobScheduleSummary.job_name');
+  }
+  const lastStatus = asNullableString(obj, 'last_status', 'JobScheduleSummary') ?? null;
+  if (lastStatus !== null && !VALID_JOB_STATUSES.includes(lastStatus as ScheduledJobRunStatus)) {
+    unexpected('Expected valid JobScheduleSummary.last_status');
+  }
+  return {
+    job_name: jobName as JobName,
+    scheduled_time_local: asString(obj, 'scheduled_time_local', 'JobScheduleSummary'),
+    last_run_date: asNullableString(obj, 'last_run_date', 'JobScheduleSummary') ?? null,
+    last_status: lastStatus as ScheduledJobRunStatus | null,
+    last_executed_at: asNullableString(obj, 'last_executed_at', 'JobScheduleSummary') ?? null,
+  };
+}
+
+export function parseJobStatusResponse(body: unknown): JobStatusResponse {
+  const obj = asRecord(body, 'JobStatusResponse');
+  if (obj.timezone !== 'Asia/Ho_Chi_Minh') {
+    unexpected('Expected JobStatusResponse.timezone to be Asia/Ho_Chi_Minh');
+  }
+  if (!Array.isArray(obj.jobs)) {
+    unexpected('Expected array JobStatusResponse.jobs');
+  }
+  return {
+    scheduler_enabled: asBoolean(obj, 'scheduler_enabled', 'JobStatusResponse'),
+    scheduler_running: asBoolean(obj, 'scheduler_running', 'JobStatusResponse'),
+    timezone: 'Asia/Ho_Chi_Minh',
+    jobs: obj.jobs.map(parseJobScheduleSummary),
+  };
+}
+
+export function parseReadinessResponse(body: unknown): ReadinessResponse {
+  const obj = asRecord(body, 'ReadinessResponse');
+  if (obj.status !== 'ready' && obj.status !== 'degraded') {
+    unexpected('Expected valid ReadinessResponse.status');
+  }
+  if (obj.service !== 'carenta-api') {
+    unexpected('Expected ReadinessResponse.service to be carenta-api');
+  }
+  if (
+    obj.auth_mode !== 'supabase_jwt' &&
+    obj.auth_mode !== 'local_dev' &&
+    obj.auth_mode !== 'fail_closed_unconfigured'
+  ) {
+    unexpected('Expected valid ReadinessResponse.auth_mode');
+  }
+  if (obj.insight_provider !== 'configured' && obj.insight_provider !== 'deterministic_fallback') {
+    unexpected('Expected valid ReadinessResponse.insight_provider');
+  }
+  const rawSubsystems = asRecord(obj.subsystems, 'ReadinessResponse.subsystems');
+  const subsystems: Record<string, string> = {};
+  for (const [key, value] of Object.entries(rawSubsystems)) {
+    if (typeof value !== 'string') {
+      unexpected(`Expected string ReadinessResponse.subsystems.${key}`);
+    }
+    subsystems[key] = value;
+  }
+  return {
+    status: obj.status,
+    service: 'carenta-api',
+    auth_mode: obj.auth_mode,
+    scheduler_enabled: asBoolean(obj, 'scheduler_enabled', 'ReadinessResponse'),
+    scheduler_running: asBoolean(obj, 'scheduler_running', 'ReadinessResponse'),
+    insight_provider: obj.insight_provider,
+    subsystems,
   };
 }

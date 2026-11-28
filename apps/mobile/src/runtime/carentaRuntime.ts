@@ -1,4 +1,5 @@
 import {
+  type AssistantSnapshotResponse,
   type AuthIdentity,
   type BudgetConfigRequest,
   type BudgetConfigResponse,
@@ -9,18 +10,30 @@ import {
   type GoalResponse,
   type GoalUpdate,
   type HealthResponse,
+  type JobName,
+  type JobStatusResponse,
+  type ProactiveTriggerListResponse,
+  type ReadinessResponse,
+  type ScheduledJobRunResponse,
   type TransactionCreate,
   type TransactionListQuery,
   type TransactionListResponse,
   type TransactionResponse,
+  type TriggerDismissResponse,
+  parseAssistantSnapshotResponse,
   parseAuthIdentity,
   parseBudgetConfigResponse,
   parseBudgetSummary,
   parseGoal,
   parseGoalList,
   parseHealthResponse,
+  parseJobStatusResponse,
+  parseProactiveTriggerListResponse,
+  parseReadinessResponse,
+  parseScheduledJobRunResponse,
   parseTransaction,
   parseTransactionList,
+  parseTriggerDismissResponse,
 } from '../api/contracts';
 import {
   ApiError,
@@ -115,6 +128,22 @@ export interface CarentaApiClient {
     today?: string,
     options?: RequestOptions
   ) => Promise<GoalResponse>;
+  getAssistantSnapshot: (
+    options?: FallbackReadOptions
+  ) => Promise<ReadResult<AssistantSnapshotResponse>>;
+  listProactiveTriggers: (
+    options?: FallbackReadOptions
+  ) => Promise<ReadResult<ProactiveTriggerListResponse>>;
+  dismissProactiveTrigger: (
+    triggerId: string,
+    options?: RequestOptions
+  ) => Promise<TriggerDismissResponse>;
+  runAssistantJob: (
+    jobName: JobName,
+    options?: RequestOptions
+  ) => Promise<ScheduledJobRunResponse>;
+  getJobStatus: (options?: RequestOptions) => Promise<JobStatusResponse>;
+  checkReadiness: (options?: RequestOptions) => Promise<ReadinessResponse>;
 }
 
 export type RuntimeAuthMode =
@@ -907,6 +936,53 @@ export function createCarentaRuntime(options: CarentaRuntimeOptions): CarentaRun
       requestJson(`/api/v1/goal/allocate${buildQuery({ today })}`, parseGoal, {
         method: 'POST',
         body: payload,
+        signal: reqOptions?.signal,
+      }),
+    getAssistantSnapshot: (readOptions) =>
+      readWithFallback(
+        'assistant:snapshot',
+        () =>
+          requestJson('/api/v1/assistant/snapshot', parseAssistantSnapshotResponse, {
+            signal: readOptions?.signal,
+          }),
+        readOptions
+      ),
+    listProactiveTriggers: (readOptions) =>
+      readWithFallback(
+        'assistant:triggers',
+        () =>
+          requestJson('/api/v1/assistant/triggers', parseProactiveTriggerListResponse, {
+            signal: readOptions?.signal,
+          }),
+        readOptions
+      ),
+    dismissProactiveTrigger: (triggerId, reqOptions) =>
+      requestJson(
+        `/api/v1/assistant/triggers/${encodeURIComponent(triggerId)}/dismiss`,
+        parseTriggerDismissResponse,
+        {
+          method: 'POST',
+          signal: reqOptions?.signal,
+        }
+      ),
+    runAssistantJob: (jobName, reqOptions) =>
+      requestJson(
+        `/api/v1/jobs/${encodeURIComponent(jobName)}/run`,
+        parseScheduledJobRunResponse,
+        {
+          method: 'POST',
+          signal: reqOptions?.signal,
+        }
+      ),
+    getJobStatus: (reqOptions) =>
+      requestJson('/api/v1/jobs/status', parseJobStatusResponse, {
+        signal: reqOptions?.signal,
+      }),
+    checkReadiness: (reqOptions) =>
+      requestJson('/ready', parseReadinessResponse, {
+        authenticated: false,
+        allowRetryOn401: false,
+        timeoutMs: HEALTH_TIMEOUT_MS,
         signal: reqOptions?.signal,
       }),
   };

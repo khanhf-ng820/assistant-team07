@@ -7,6 +7,7 @@ The service-role key bypasses row-level security; it must never be copied into
 ``apps/mobile`` or any ``EXPO_PUBLIC_*`` variable.
 """
 
+import datetime as dt
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ from dataclasses import dataclass
 from pydantic import SecretStr
 
 _REQUIRED = ("SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY")
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 
 @dataclass(frozen=True)
@@ -21,6 +23,71 @@ class SupabaseSettings:
     url: str
     anon_key: SecretStr
     service_role_key: SecretStr
+
+
+@dataclass(frozen=True)
+class SchedulerSettings:
+    """Configuration for the in-process background scheduler and cron endpoints."""
+
+    enabled: bool = False
+    poll_interval_seconds: float = 60.0
+    evening_reminder_time: dt.time = dt.time(20, 0)
+    habit_analysis_time: dt.time = dt.time(7, 30)
+    scheduler_secret: SecretStr | None = None
+
+
+def _parse_hhmm(raw: str, var_name: str, default: dt.time) -> dt.time:
+    cleaned = raw.strip()
+    if not cleaned:
+        return default
+    parts = cleaned.split(":")
+    if len(parts) != 2 or not all(p.isdigit() for p in parts):
+        raise ValueError(f"{var_name} must use HH:MM 24-hour format.")
+    hour, minute = int(parts[0]), int(parts[1])
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ValueError(f"{var_name} has an out-of-range hour or minute.")
+    return dt.time(hour, minute)
+
+
+def load_scheduler_settings(
+    environ: Mapping[str, str] | None = None,
+) -> SchedulerSettings:
+    """Load in-process scheduler settings from environment variables."""
+    env = os.environ if environ is None else environ
+    enabled = env.get("CARENTA_SCHEDULER_ENABLED", "").strip().lower() in _TRUTHY
+
+    raw_poll = env.get("CARENTA_SCHEDULER_POLL_SECONDS", "").strip()
+    if raw_poll:
+        try:
+            poll_interval_seconds = float(raw_poll)
+        except ValueError as exc:
+            raise ValueError("CARENTA_SCHEDULER_POLL_SECONDS must be a positive number.") from exc
+        if poll_interval_seconds <= 0:
+            raise ValueError("CARENTA_SCHEDULER_POLL_SECONDS must be greater than zero.")
+    else:
+        poll_interval_seconds = 60.0
+
+    evening_reminder_time = _parse_hhmm(
+        env.get("CARENTA_EVENING_REMINDER_TIME", ""),
+        "CARENTA_EVENING_REMINDER_TIME",
+        dt.time(20, 0),
+    )
+    habit_analysis_time = _parse_hhmm(
+        env.get("CARENTA_HABIT_ANALYSIS_TIME", ""),
+        "CARENTA_HABIT_ANALYSIS_TIME",
+        dt.time(7, 30),
+    )
+
+    raw_secret = env.get("CARENTA_SCHEDULER_SECRET", "").strip()
+    scheduler_secret = SecretStr(raw_secret) if raw_secret else None
+
+    return SchedulerSettings(
+        enabled=enabled,
+        poll_interval_seconds=poll_interval_seconds,
+        evening_reminder_time=evening_reminder_time,
+        habit_analysis_time=habit_analysis_time,
+        scheduler_secret=scheduler_secret,
+    )
 
 
 def load_supabase_settings(environ: Mapping[str, str] | None = None) -> SupabaseSettings | None:

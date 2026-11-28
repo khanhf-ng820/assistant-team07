@@ -15,6 +15,9 @@ export type ApiErrorCode =
   | 'CONFLICT'
   | 'VALIDATION_ERROR'
   | 'RATE_LIMITED'
+  | 'TRIGGER_NOT_FOUND'
+  | 'SCHEDULER_SECRET_UNCONFIGURED'
+  | 'SCHEDULER_FORBIDDEN'
   | 'INTERNAL_ERROR'
   | 'SERVER_ERROR'
   | 'HTTP_ERROR'
@@ -77,6 +80,9 @@ const VIETNAMESE_CODE_MESSAGES: Record<string, string> = {
   CONFLICT: 'Dữ liệu xung đột với trạng thái hiện tại.',
   VALIDATION_ERROR: 'Dữ liệu nhập chưa hợp lệ, vui lòng kiểm tra lại.',
   RATE_LIMITED: 'Bạn thao tác quá nhanh, vui lòng thử lại sau ít phút.',
+  TRIGGER_NOT_FOUND: 'Không tìm thấy gợi ý hoặc cảnh báo này.',
+  SCHEDULER_SECRET_UNCONFIGURED: 'Bộ lập lịch hệ thống chưa được cấu hình.',
+  SCHEDULER_FORBIDDEN: 'Bạn không có quyền kích hoạt tác vụ hệ thống.',
   INTERNAL_ERROR: 'Máy chủ đang gặp sự cố, vui lòng thử lại sau.',
   SERVER_ERROR: 'Máy chủ đang bận, vui lòng thử lại sau.',
   STORAGE_READ_FAILED: 'Không thể đọc phiên đăng nhập từ bộ nhớ bảo mật. Vui lòng thử lại.',
