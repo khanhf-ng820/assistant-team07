@@ -35,7 +35,7 @@ uv sync --project services/carenta-api --locked --python 3.12
 uv run --project services/carenta-api --env-file services/carenta-api/.env uvicorn app.main:app --app-dir services/carenta-api --host 0.0.0.0 --port 8000
 ```
 
-Phase 1 financial routes currently use a single global in-memory repository without `get_current_identity` enforcement yet; Supabase persistence and route-level identity scoping are tracked separately. There is no Gemini integration or media upload yet. `days_remaining` is derived from `today` in Asia/Ho_Chi_Minh (inclusive to month-end); use the `days_remaining` query parameter on `/budget/summary` to override it per request.
+Phase 1 financial routes enforce `get_current_identity` and isolate state per `Student Identity` (`user_id`) inside `InMemoryRepository` (mirroring `#42`'s `owner_id` invariants); live Supabase Postgres persistence is tracked separately. There is no Gemini integration or media upload yet. `days_remaining` is derived from `today` in Asia/Ho_Chi_Minh (inclusive to month-end); use the `days_remaining` query parameter on `/budget/summary` to override it per request.
 
 For unauthenticated LAN testing without Supabase env vars configured, set `CARENTA_LOCAL_DEV_AUTH=true` in `.env` (automatically ignored whenever `SUPABASE_URL` or `SUPABASE_JWT_SECRET` is set).
 
@@ -55,7 +55,13 @@ uv run --env-file services/carenta-api/.env --project services/carenta-api uvico
 ```
 
 `.env` is ignored by Git. `app/settings.py` wraps the keys in `SecretStr` so
-they do not appear in logs or `repr`. The service-role key bypasses RLS: never
+they do not appear in logs or `repr`. `load_supabase_settings()` intentionally
+requires all three DB/admin variables (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, and
+`SUPABASE_SERVICE_ROLE_KEY`), whereas JWT-only API authentication uses
+`app/auth.py` (`load_auth_config()`) and starts cleanly with `SUPABASE_URL`
+(or `SUPABASE_JWT_SECRET`) alone; in secret-only mode (without
+`SUPABASE_URL`), issuer (`iss`) validation is skipped because the expected
+issuer is derived from `SUPABASE_URL`. The service-role key bypasses RLS: never
 copy it into `apps/mobile` or an `EXPO_PUBLIC_*` variable; a test checks that the
 mobile sources do not reference it.
 

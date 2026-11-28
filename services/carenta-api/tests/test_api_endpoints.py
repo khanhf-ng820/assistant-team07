@@ -11,12 +11,15 @@ Verifies:
 """
 
 import asyncio
-import datetime as dt
 import pytest
 import httpx
 
-from app.main import app
+from app.auth import AuthConfig
+from app.main import create_app
 from app.repository import repository
+
+# Functional CRUD/engine tests opt into explicit Local Dev Mode while default create_app() fails closed.
+app = create_app(auth_config=AuthConfig(local_dev_auth=True))
 
 
 def client_request(method: str, path: str, json: dict | None = None, params: dict | None = None):

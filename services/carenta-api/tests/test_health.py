@@ -1,35 +1,22 @@
-import asyncio
-
-import httpx
-
-from app.main import app, create_app
+from app.main import create_app
 
 
-def get(path, application=app, headers=None):
-    async def request():
-        transport = httpx.ASGITransport(app=application)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            return await client.get(path, headers=headers)
-
-    return asyncio.run(request())
-
-
-def test_health_returns_service_identity():
-    response = get("/health")
+def test_health_returns_service_identity(request_api):
+    response = request_api("GET", "/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "service": "carenta-api"}
     assert "x-request-id" in response.headers
     assert len(response.headers["x-request-id"]) >= 8
 
 
-def test_health_echoes_safe_incoming_request_id():
-    response = get("/health", headers={"X-Request-ID": "req-mobile-123"})
+def test_health_echoes_safe_incoming_request_id(request_api):
+    response = request_api("GET", "/health", headers={"X-Request-ID": "req-mobile-123"})
     assert response.status_code == 200
     assert response.headers["x-request-id"] == "req-mobile-123"
 
 
-def test_openapi_describes_expected_routes():
-    schema = get("/openapi.json", create_app()).json()
+def test_openapi_describes_expected_routes(request_api):
+    schema = request_api("GET", "/openapi.json", application=create_app()).json()
     expected_routes = {
         "/health",
         "/api/v1/auth/me",
@@ -45,8 +32,8 @@ def test_openapi_describes_expected_routes():
     )
 
 
-def test_unknown_route_uses_structured_error_envelope():
-    response = get("/v1/nonexistent-route", headers={"X-Request-ID": "req-404-check"})
+def test_unknown_route_uses_structured_error_envelope(request_api):
+    response = request_api("GET", "/v1/nonexistent-route", headers={"X-Request-ID": "req-404-check"})
     assert response.status_code == 404
     body = response.json()
     assert body["error"]["code"] == "NOT_FOUND"
