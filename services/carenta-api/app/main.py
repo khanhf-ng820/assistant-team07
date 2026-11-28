@@ -16,7 +16,8 @@ from app.auth import (
     load_auth_config,
     make_current_identity_dependency,
 )
-from app.errors import register_error_handlers
+from app.errors import ApiHttpError, register_error_handlers
+from app.validation import MAX_AMOUNT_VND, FinancialInputError
 from app.repository import (
     ActiveGoalExistsError,
     IdempotencyConflictError,
@@ -40,13 +41,15 @@ class HealthResponse(BaseModel):
 
 
 class BudgetConfigRequest(BaseModel):
-    opening_balance: Optional[int] = Field(default=None, ge=0)
-    unpaid_commitments: Optional[int] = Field(default=None, ge=0)
-    savings_reserved: Optional[int] = Field(default=None, ge=0)
+    opening_balance: Optional[int] = Field(default=None, ge=0, le=MAX_AMOUNT_VND, strict=True)
+    unpaid_commitments: Optional[int] = Field(default=None, ge=0, le=MAX_AMOUNT_VND, strict=True)
+    savings_reserved: Optional[int] = Field(default=None, ge=0, le=MAX_AMOUNT_VND, strict=True)
 
 
 class GoalAllocationRequest(BaseModel):
-    amount: int = Field(gt=0, description="Amount in integer VND to allocate into savings")
+    amount: int = Field(
+        gt=0, le=MAX_AMOUNT_VND, strict=True, description="Amount in integer VND to allocate into savings"
+    )
 
 
 def create_router(
@@ -83,6 +86,9 @@ def create_router(
             return repo.create_transaction(identity.user_id, payload)
         except IdempotencyConflictError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+        except FinancialInputError as exc:
+            # #56: future dates, ledger overflow, and MU01 large-amount confirmation.
+            raise ApiHttpError(status.HTTP_422_UNPROCESSABLE_CONTENT, exc.code, exc.message) from exc
 
     @router.get("/transactions/{transaction_id}", response_model=TransactionResponse)
     def get_transaction(

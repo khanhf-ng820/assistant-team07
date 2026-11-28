@@ -6,9 +6,13 @@ import datetime as dt
 from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.validation import MAX_AMOUNT_VND
+
 
 class TransactionBase(BaseModel):
-    amount: int = Field(gt=0, description="Transaction amount in integer VND")
+    amount: int = Field(
+        gt=0, le=MAX_AMOUNT_VND, strict=True, description="Transaction amount in integer VND"
+    )
     kind: Literal["income", "expense"] = Field(description="Transaction type: income or expense")
     category: str = Field(min_length=1, max_length=50, description="Spending or income category")
     date: dt.date = Field(description="Transaction date (YYYY-MM-DD)")
@@ -20,6 +24,14 @@ class TransactionCreate(TransactionBase):
         min_length=1,
         max_length=100,
         description="Unique key to guarantee idempotent transaction creation",
+    )
+    confirm_large_amount: bool = Field(
+        default=False,
+        strict=True,
+        description=(
+            "Set to true only after the user confirms an abnormally large amount "
+            "(MU01); otherwise such entries are rejected with LARGE_AMOUNT_CONFIRMATION_REQUIRED"
+        ),
     )
 
 
@@ -39,7 +51,9 @@ class TransactionListResponse(BaseModel):
 
 class GoalBase(BaseModel):
     title: str = Field(min_length=1, max_length=100, description="Savings goal title")
-    target_amount: int = Field(gt=0, description="Target savings amount in integer VND")
+    target_amount: int = Field(
+        gt=0, le=MAX_AMOUNT_VND, strict=True, description="Target savings amount in integer VND"
+    )
     deadline: dt.date = Field(description="Goal deadline date (YYYY-MM-DD)")
 
 
@@ -50,7 +64,7 @@ class GoalCreate(GoalBase):
 
 class GoalUpdate(BaseModel):
     title: Optional[str] = Field(default=None, min_length=1, max_length=100)
-    target_amount: Optional[int] = Field(default=None, gt=0)
+    target_amount: Optional[int] = Field(default=None, gt=0, le=MAX_AMOUNT_VND, strict=True)
     deadline: Optional[dt.date] = Field(default=None)
 
 

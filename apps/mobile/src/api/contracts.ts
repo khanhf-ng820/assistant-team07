@@ -21,6 +21,8 @@ export interface TransactionCreate {
   date: string;
   note?: string | null;
   idempotency_key: string;
+  /** MU01 (#56): resend as true after the user confirms an abnormally large amount. */
+  confirm_large_amount?: boolean;
 }
 
 export interface TransactionResponse {

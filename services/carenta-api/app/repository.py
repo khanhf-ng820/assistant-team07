@@ -20,6 +20,14 @@ from app.budget import (
     calculate_goal_projection,
     calculate_safe_to_spend,
 )
+from app.validation import (
+    FinancialInputError,
+    LargeAmount,
+    check_ledger_totals,
+    check_transaction_date,
+    format_vnd,
+    large_amount,
+)
 from app.schemas import (
     BudgetSummaryResponse,
     GoalCreate,
@@ -58,6 +66,19 @@ class IdempotencyConflictError(Exception):
 class ActiveGoalExistsError(Exception):
     """Raised when creating a goal while one is already active."""
     pass
+
+
+class LargeAmountConfirmationRequired(FinancialInputError):
+    """MU01: an abnormally large entry needs ``confirm_large_amount: true``."""
+
+    def __init__(self, hit: LargeAmount) -> None:
+        label = "expense" if hit.kind == "expense" else "income"
+        super().__init__(
+            "LARGE_AMOUNT_CONFIRMATION_REQUIRED",
+            f"This {label} of {format_vnd(hit.amount)} is at or above the "
+            f"{format_vnd(hit.threshold)} check. Confirm it to record it.",
+        )
+        self.hit = hit
 
 
 @dataclass
@@ -122,7 +143,28 @@ class InMemoryRepository:
 
     # --- Transactions ---
 
-    def create_transaction(self, user_id: str, data: TransactionCreate) -> TransactionResponse:
+    @staticmethod
+    def _check_new_transaction(ledger: _OwnerLedger, data: TransactionCreate, today: dt.date) -> None:
+        """#56 boundary guards; run only for new entries, after the idempotency lookup.
+
+        Hard rejections come first, so a student is never asked to confirm an
+        entry (MU01) that would then be refused anyway.
+        """
+        check_transaction_date(data.date, today)
+        total_income = sum(t["amount"] for t in ledger.transactions.values() if t["kind"] == "income")
+        total_expense = sum(t["amount"] for t in ledger.transactions.values() if t["kind"] == "expense")
+        if data.kind == "income":
+            total_income += data.amount
+        else:
+            total_expense += data.amount
+        check_ledger_totals(total_income, total_expense)
+        hit = large_amount(data.kind, data.amount)
+        if hit is not None and not data.confirm_large_amount:
+            raise LargeAmountConfirmationRequired(hit)
+
+    def create_transaction(
+        self, user_id: str, data: TransactionCreate, today: Optional[dt.date] = None
+    ) -> TransactionResponse:
         owner_id = _require_owner_id(user_id)
         with self._lock:
             ledger = self._get_or_create_ledger(owner_id)
@@ -142,6 +184,8 @@ class InMemoryRepository:
                         "Idempotency key conflict: payload does not match the original transaction"
                     )
                 return TransactionResponse(**record)
+
+            self._check_new_transaction(ledger, data, today or get_current_date())
 
             tx_id = str(uuid.uuid4())
             now = dt.datetime.now(dt.timezone.utc)
