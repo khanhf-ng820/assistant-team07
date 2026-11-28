@@ -1,4 +1,6 @@
 import React, { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
+import { isApiError } from '../api/errors';
+import { useOptionalAuth } from '../auth/AuthContext';
 import {
   buildDailyExpenseSummary,
   DAILY_BUDGET_LIMIT,
@@ -23,6 +25,11 @@ import {
 export type ConfirmAiDraftResult =
   | { ok: true; deduplicated: boolean }
   | { ok: false; error: string };
+
+export type AiDraftPersistFn = (
+  draft: AiExpenseDraft,
+  idempotencyKey: string
+) => Promise<void> | void;
 
 interface LedgerDataContextType {
   availableBalance: number;
@@ -54,7 +61,10 @@ interface LedgerUIContextType {
   openAiConfirmation: (draft: AiExpenseDraft) => void;
   updatePendingAiDraft: (draft: AiExpenseDraft) => void;
   closeAiConfirmation: () => void;
-  confirmAiDraft: (draft?: AiExpenseDraft) => ConfirmAiDraftResult;
+  confirmAiDraft: (
+    draft?: AiExpenseDraft,
+    options?: { persist?: AiDraftPersistFn }
+  ) => Promise<ConfirmAiDraftResult>;
   toastMessage: string | null;
   showSuccessToast: (message: string) => void;
   dismissToast: () => void;
@@ -66,6 +76,7 @@ const LedgerDataContext = createContext<LedgerDataContextType | undefined>(undef
 const LedgerUIContext = createContext<LedgerUIContextType | undefined>(undefined);
 
 export function LedgerProvider({ children }: { children: React.ReactNode }) {
+  const auth = useOptionalAuth();
   const [availableBalance, setAvailableBalance] = useState<number>(INITIAL_AVAILABLE_BALANCE);
   const [isBalanceVisible, setIsBalanceVisible] = useState<boolean>(true);
   const [selectedDate, setSelectedDate] = useState<string>('2024-07-10');
@@ -78,6 +89,8 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
   const [isAiConfirmationOpen, setIsAiConfirmationOpen] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const confirmedDraftIdsRef = useRef<Set<string>>(new Set());
+  const inFlightDraftIdsRef = useRef<Set<string>>(new Set());
+  const draftIdempotencyKeysRef = useRef<Map<string, string>>(new Map());
 
   const toggleBalanceVisibility = useCallback(() => {
     setIsBalanceVisible((prev) => !prev);
@@ -145,7 +158,10 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
   );
 
   const confirmAiDraft = useCallback(
-    (draftOverride?: AiExpenseDraft): ConfirmAiDraftResult => {
+    async (
+      draftOverride?: AiExpenseDraft,
+      options?: { persist?: AiDraftPersistFn }
+    ): Promise<ConfirmAiDraftResult> => {
       const targetDraft = draftOverride ?? pendingAiDraft;
       if (!targetDraft) {
         return { ok: false, error: 'Không tìm thấy bản nháp giao dịch để xác nhận.' };
@@ -156,32 +172,71 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
         return { ok: false, error: 'Vui lòng bổ sung đầy đủ số tiền và danh mục trước khi xác nhận.' };
       }
 
+      // Single deduplication gate executed before any persistence side effect
       if (confirmedDraftIdsRef.current.has(targetDraft.draftId)) {
         setIsAiConfirmationOpen(false);
         setPendingAiDraft(null);
         return { ok: true, deduplicated: true };
       }
 
-      confirmedDraftIdsRef.current.add(targetDraft.draftId);
-      const txTime =
-        targetDraft.time ??
-        formatVietnamTimeFromTimestamp(new Date().toISOString()) ??
-        '00:00';
+      if (inFlightDraftIdsRef.current.has(targetDraft.draftId)) {
+        return { ok: true, deduplicated: true };
+      }
 
-      addTransaction({
-        amount: targetDraft.amount,
-        categoryId: targetDraft.categoryId,
-        note: resolveDraftNote(targetDraft),
-        date: targetDraft.date,
-        time: txTime,
-      });
+      let idempotencyKey = draftIdempotencyKeysRef.current.get(targetDraft.draftId);
+      if (!idempotencyKey) {
+        idempotencyKey = `ai-draft-${targetDraft.draftId}`;
+        draftIdempotencyKeysRef.current.set(targetDraft.draftId, idempotencyKey);
+      }
 
-      setIsAiConfirmationOpen(false);
-      setPendingAiDraft(null);
-      setToastMessage(`Đã lưu khoản chi ${formatVND(targetDraft.amount)} vào sổ chi tiêu`);
-      return { ok: true, deduplicated: false };
+      inFlightDraftIdsRef.current.add(targetDraft.draftId);
+      const resolvedNote = resolveDraftNote(targetDraft);
+
+      try {
+        if (options?.persist) {
+          await options.persist(targetDraft, idempotencyKey);
+        } else if (auth?.isApiConfigured) {
+          await auth.apiClient.createTransaction({
+            amount: targetDraft.amount,
+            kind: 'expense',
+            category: targetDraft.categoryId,
+            date: targetDraft.date,
+            note: resolvedNote,
+            idempotency_key: idempotencyKey,
+          });
+        }
+
+        confirmedDraftIdsRef.current.add(targetDraft.draftId);
+        const txTime =
+          targetDraft.time ??
+          formatVietnamTimeFromTimestamp(new Date().toISOString()) ??
+          '00:00';
+
+        addTransaction({
+          amount: targetDraft.amount,
+          categoryId: targetDraft.categoryId,
+          note: resolvedNote,
+          date: targetDraft.date,
+          time: txTime,
+        });
+
+        setIsAiConfirmationOpen(false);
+        setPendingAiDraft(null);
+        setToastMessage(`Đã lưu khoản chi ${formatVND(targetDraft.amount)} vào sổ chi tiêu`);
+        return { ok: true, deduplicated: false };
+      } catch (error) {
+        // Retain pending draft & stable idempotency key so the user can retry safely
+        const message = isApiError(error)
+          ? error.userMessage
+          : error instanceof Error && error.message
+            ? error.message
+            : 'Không thể lưu giao dịch. Vui lòng thử lại.';
+        return { ok: false, error: message };
+      } finally {
+        inFlightDraftIdsRef.current.delete(targetDraft.draftId);
+      }
     },
-    [pendingAiDraft, addTransaction]
+    [pendingAiDraft, addTransaction, auth]
   );
 
   // Daily summaries dynamically generated for the active year and month

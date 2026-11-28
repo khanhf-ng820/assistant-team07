@@ -1,10 +1,12 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { AuthProvider } from '../src/auth/AuthContext';
 import { Toast } from '../src/components/Toast';
 import { AiConfirmationModal } from '../src/components/ai-confirmation/AiConfirmationModal';
 import { GreetingHeader } from '../src/components/dashboard/GreetingHeader';
-import { LedgerProvider, useLedger } from '../src/context/LedgerContext';
+import { type AiDraftPersistFn, LedgerProvider, useLedger } from '../src/context/LedgerContext';
+import type { CarentaApiClient, CarentaRuntime } from '../src/runtime/carentaRuntime';
 import {
   AiExpenseDraft,
   formatVietnamTimeFromTimestamp,
@@ -17,11 +19,10 @@ function AiFlowTestHarness({
   onNavigateToStats,
 }: {
   initialDraft: AiExpenseDraft;
-  onConfirmDraft?: (draft: AiExpenseDraft) => Promise<void> | void;
+  onConfirmDraft?: AiDraftPersistFn;
   onNavigateToStats?: () => void;
 }) {
-  const { openAiConfirmation, toastMessage, dismissToast, transactions, confirmAiDraft } =
-    useLedger();
+  const { openAiConfirmation, toastMessage, dismissToast, transactions } = useLedger();
 
   return (
     <View>
@@ -32,14 +33,6 @@ function AiFlowTestHarness({
         onPress={() => openAiConfirmation(initialDraft)}
       >
         <Text>Mở xác nhận AI</Text>
-      </Pressable>
-      <Pressable
-        testID="duplicate-confirm-trigger"
-        onPress={() => {
-          confirmAiDraft(initialDraft);
-        }}
-      >
-        <Text>Xác nhận lại</Text>
       </Pressable>
       <AiConfirmationModal
         onConfirmDraft={onConfirmDraft}
@@ -225,13 +218,15 @@ describe('AiConfirmationModal & QuickEditModal (Issue #50)', () => {
     expect(screen.getByTestId('ai-confirm-submit-button')).toBeEnabled();
   });
 
-  it('persists transaction on Confirm, recalculates budget, shows Toast, navigates back, and prevents duplicate draftId writes', async () => {
+  it('persists once via shared confirmation path, shows Toast, and skips callback if confirmed draft is reopened', async () => {
+    const onConfirmDraft = jest.fn().mockResolvedValue(undefined);
     const onNavigateToStats = jest.fn();
 
     await render(
       <LedgerProvider>
         <AiFlowTestHarness
           initialDraft={sampleOcrDraft}
+          onConfirmDraft={onConfirmDraft}
           onNavigateToStats={onNavigateToStats}
         />
       </LedgerProvider>
@@ -243,18 +238,27 @@ describe('AiConfirmationModal & QuickEditModal (Issue #50)', () => {
       await fireEvent.press(screen.getByTestId('ai-confirm-submit-button'));
     });
 
+    expect(onConfirmDraft).toHaveBeenCalledTimes(1);
+    expect(onConfirmDraft).toHaveBeenCalledWith(sampleOcrDraft, 'ai-draft-draft-ocr-01');
     expect(Number(screen.getByTestId('harness-tx-count').props.children)).toBe(initialCount + 1);
     expect(screen.getByTestId('balance-amount-display')).toHaveTextContent('4.455.000 ₫');
     expect(screen.getByText('Đã lưu khoản chi 45.000 ₫ vào sổ chi tiêu')).toBeVisible();
     expect(onNavigateToStats).toHaveBeenCalledTimes(1);
 
-    // Repeating confirm for the same draftId must not duplicate the transaction
-    await fireEvent.press(screen.getByTestId('duplicate-confirm-trigger'));
+    // Reopening and confirming the already-confirmed draft must not invoke persistence again
+    await fireEvent.press(screen.getByTestId('open-ai-confirm-trigger'));
+    await act(async () => {
+      await fireEvent.press(screen.getByTestId('ai-confirm-submit-button'));
+    });
+    expect(onConfirmDraft).toHaveBeenCalledTimes(1);
     expect(Number(screen.getByTestId('harness-tx-count').props.children)).toBe(initialCount + 1);
   });
 
-  it('keeps draft open and surfaces error if async confirm handler fails', async () => {
-    const onConfirmDraft = jest.fn().mockRejectedValue(new Error('Mất kết nối máy chủ'));
+  it('retains draft and reuses stable idempotency key when retrying after a failed save', async () => {
+    const onConfirmDraft = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('Mất kết nối máy chủ'))
+      .mockResolvedValueOnce(undefined);
     const onNavigateToStats = jest.fn();
 
     await render(
@@ -275,8 +279,92 @@ describe('AiConfirmationModal & QuickEditModal (Issue #50)', () => {
     expect(screen.getByTestId('ai-confirm-error-banner')).toHaveTextContent(
       'Mất kết nối máy chủ'
     );
+    expect(screen.getByTestId('ai-confirmation-modal')).toBeVisible();
     expect(onNavigateToStats).not.toHaveBeenCalled();
     expect(screen.getByTestId('balance-amount-display')).toHaveTextContent('4.500.000 ₫');
+
+    // Retry the retained draft: same idempotency key is passed and save succeeds once
+    await act(async () => {
+      await fireEvent.press(screen.getByTestId('ai-confirm-submit-button'));
+    });
+    expect(onConfirmDraft).toHaveBeenCalledTimes(2);
+    expect(onConfirmDraft).toHaveBeenNthCalledWith(1, sampleOcrDraft, 'ai-draft-draft-ocr-01');
+    expect(onConfirmDraft).toHaveBeenNthCalledWith(2, sampleOcrDraft, 'ai-draft-draft-ocr-01');
+    expect(screen.getByTestId('balance-amount-display')).toHaveTextContent('4.455.000 ₫');
+    expect(screen.getByText('Đã lưu khoản chi 45.000 ₫ vào sổ chi tiêu')).toBeVisible();
+    expect(onNavigateToStats).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists via auth apiClient.createTransaction when API is configured and blocks duplicate reopen calls', async () => {
+    const createTransaction = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('Lỗi máy chủ tạm thời'))
+      .mockResolvedValueOnce({
+        id: 'tx-api-1',
+        amount: 45000,
+        kind: 'expense',
+        category: 'food',
+        date: '2024-07-09',
+        note: 'Highlands Coffee - Cà phê sữa đá',
+        idempotency_key: 'ai-draft-draft-ocr-01',
+        created_at: '2024-07-09T05:30:00Z',
+      });
+
+    const mockApiClient = { createTransaction } as unknown as CarentaApiClient;
+    const stableSnapshot = {
+      status: 'authenticated' as const,
+      student: { id: 'stu-1', email: 'minh@student.edu.vn', role: 'authenticated' },
+      error: null,
+      isApiConfigured: true,
+      canRetryRestore: false,
+    };
+    const mockRuntime: CarentaRuntime = {
+      getSnapshot: () => stableSnapshot,
+      subscribe: () => () => {},
+      restore: async () => {},
+      signIn: async () => {},
+      signOut: async () => {},
+      apiClient: mockApiClient,
+    };
+
+    await render(
+      <AuthProvider runtime={mockRuntime}>
+        <LedgerProvider>
+          <AiFlowTestHarness initialDraft={sampleOcrDraft} />
+        </LedgerProvider>
+      </AuthProvider>
+    );
+
+    await fireEvent.press(screen.getByTestId('open-ai-confirm-trigger'));
+    await act(async () => {
+      await fireEvent.press(screen.getByTestId('ai-confirm-submit-button'));
+    });
+
+    // Draft retained on error
+    expect(screen.getByTestId('ai-confirm-error-banner')).toHaveTextContent('Lỗi máy chủ tạm thời');
+    expect(screen.getByTestId('balance-amount-display')).toHaveTextContent('4.500.000 ₫');
+
+    // Retry succeeds with stable idempotency_key
+    await act(async () => {
+      await fireEvent.press(screen.getByTestId('ai-confirm-submit-button'));
+    });
+    expect(createTransaction).toHaveBeenCalledTimes(2);
+    expect(createTransaction).toHaveBeenLastCalledWith({
+      amount: 45000,
+      kind: 'expense',
+      category: 'food',
+      date: '2024-07-09',
+      note: 'Highlands Coffee - Cà phê sữa đá',
+      idempotency_key: 'ai-draft-draft-ocr-01',
+    });
+    expect(screen.getByTestId('balance-amount-display')).toHaveTextContent('4.455.000 ₫');
+
+    // Reopening confirmed draft cannot invoke createTransaction again
+    await fireEvent.press(screen.getByTestId('open-ai-confirm-trigger'));
+    await act(async () => {
+      await fireEvent.press(screen.getByTestId('ai-confirm-submit-button'));
+    });
+    expect(createTransaction).toHaveBeenCalledTimes(2);
   });
 
   it('meets >= 48dp touch targets and modal accessibility requirements', async () => {

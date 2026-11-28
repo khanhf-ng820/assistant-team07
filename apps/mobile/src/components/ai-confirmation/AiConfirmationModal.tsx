@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Modal, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLedger } from '../../context/LedgerContext';
+import { type AiDraftPersistFn, useLedger } from '../../context/LedgerContext';
 import { colors, spacing } from '../../theme';
 import { AiExpenseDraft, validateAiDraft } from '../../types/aiDraft';
 import { Header } from '../Header';
@@ -11,7 +11,7 @@ import { QuickEditModal } from './QuickEditModal';
 export interface AiConfirmationFlowProps {
   draft: AiExpenseDraft;
   onDraftChange?: (updated: AiExpenseDraft) => void;
-  onConfirmDraft?: (draft: AiExpenseDraft) => Promise<void> | void;
+  onConfirmDraft?: AiDraftPersistFn;
   onClose?: () => void;
   onNavigateToStats?: () => void;
   backAccessibilityLabel?: string;
@@ -96,32 +96,25 @@ export function AiConfirmationFlow({
     setErrorMessage(null);
 
     try {
-      if (onConfirmDraft) {
-        await onConfirmDraft(localDraft);
-      }
-      const result = confirmAiDraft(localDraft);
+      const result = await confirmAiDraft(
+        localDraft,
+        onConfirmDraft ? { persist: onConfirmDraft } : undefined
+      );
       if (!result.ok) {
         if (isMountedRef.current) {
           setErrorMessage(result.error);
           setIsSubmitting(false);
         }
-        submitGuardRef.current = false;
         return;
       }
 
+      if (isMountedRef.current) {
+        setIsSubmitting(false);
+      }
       if (onClose) {
         onClose();
       }
       onNavigateToStats?.();
-    } catch (error) {
-      if (isMountedRef.current) {
-        setErrorMessage(
-          error instanceof Error && error.message
-            ? error.message
-            : 'Không thể lưu giao dịch. Vui lòng thử lại.'
-        );
-        setIsSubmitting(false);
-      }
     } finally {
       submitGuardRef.current = false;
     }
@@ -172,7 +165,7 @@ export interface AiConfirmationModalProps {
   visible?: boolean;
   draft?: AiExpenseDraft | null;
   onClose?: () => void;
-  onConfirmDraft?: (draft: AiExpenseDraft) => Promise<void> | void;
+  onConfirmDraft?: AiDraftPersistFn;
   onNavigateToStats?: () => void;
 }
 
