@@ -4,6 +4,7 @@ import TabsLayout from '../app/(tabs)/_layout';
 import StatsScreen from '../app/(tabs)/index';
 import SavingsScreen from '../app/(tabs)/savings';
 import CalendarDetailScreen from '../app/calendar-detail';
+import OnboardingScreen from '../app/onboarding';
 
 const routes = {
   _layout: RootLayout,
@@ -11,6 +12,7 @@ const routes = {
   '(tabs)/index': StatsScreen,
   '(tabs)/savings': SavingsScreen,
   'calendar-detail': CalendarDetailScreen,
+  onboarding: OnboardingScreen,
 };
 
 it('starts on Stats and switches between exactly two tabs', async () => {
@@ -60,5 +62,16 @@ it('navigates from StatsScreen to calendar-detail and returns', async () => {
   expect(screen.getByTestId('monthly-budget-summary-card')).toBeVisible();
 
   await fireEvent.press(screen.getByTestId('calendar-back-button'));
+  expect(screen.getByTestId('greeting-header')).toBeVisible();
+});
+
+it('opens /onboarding from StatsScreen wallet button and navigates back cleanly', async () => {
+  await renderRouter(routes, { initialUrl: '/' });
+  await fireEvent.press(screen.getByTestId('wallet-button'));
+
+  expect(screen.getByRole('header', { name: 'Thiết lập tài chính' })).toBeVisible();
+  expect(screen.getByTestId('onboarding-step-allowance')).toBeVisible();
+
+  await fireEvent.press(screen.getByRole('button', { name: 'Quay lại' }));
   expect(screen.getByTestId('greeting-header')).toBeVisible();
 });

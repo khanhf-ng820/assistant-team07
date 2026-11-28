@@ -5,6 +5,7 @@ import { Button } from '../src/components/Button';
 import { CaptureChooser } from '../src/components/CaptureChooser';
 import { Header } from '../src/components/Header';
 import { TOAST_BADGE_CONFIG, Toast, type ToastType } from '../src/components/Toast';
+import { GoalDeadlinePickerModal } from '../src/components/onboarding/GoalDeadlinePickerModal';
 import { colors } from '../src/theme';
 
 /**
@@ -76,6 +77,14 @@ describe('WCAG 2.1 AA Color Contrast Audit', () => {
       expect(ratio).toBeGreaterThanOrEqual(4.5);
     }
   );
+
+  it('Onboarding badges and surfaces meet WCAG AA contrast (>= 4.5:1)', () => {
+    expect(getContrastRatio(colors.primaryDark, colors.primaryLight)).toBeGreaterThanOrEqual(4.5);
+    expect(getContrastRatio(colors.text, colors.savingsTint)).toBeGreaterThanOrEqual(4.5);
+    expect(getContrastRatio(colors.text, colors.warningSoft)).toBeGreaterThanOrEqual(4.5);
+    expect(getContrastRatio(colors.text, colors.dangerSoft)).toBeGreaterThanOrEqual(4.5);
+    expect(getContrastRatio(colors.text, colors.successSoft)).toBeGreaterThanOrEqual(4.5);
+  });
 });
 
 describe('Touch Target Compliance (>= 48x48dp)', () => {
@@ -145,5 +154,31 @@ describe('Accessibility Roles & Screen Reader Attributes', () => {
     const toast = getByTestId('a11y-toast');
     expect(toast.props.accessibilityRole).toBe('alert');
     expect(toast.props.accessibilityLiveRegion).toBe('assertive');
+  });
+
+  it('GoalDeadlinePickerModal sets accessibilityViewIsModal and >= 48dp controls', async () => {
+    const { getByTestId } = await render(
+      <GoalDeadlinePickerModal
+        visible
+        selectedDate="2026-08-11"
+        today="2026-07-12"
+        onConfirm={jest.fn()}
+        onCancel={jest.fn()}
+      />
+    );
+
+    const modalRoot = getByTestId('goal-deadline-picker-modal').children[0];
+    expect(typeof modalRoot !== 'string' && modalRoot.props.accessibilityViewIsModal).toBe(true);
+
+    for (const id of [
+      'deadline-picker-prev-month',
+      'deadline-picker-next-month',
+      'deadline-picker-cancel',
+      'deadline-picker-confirm',
+    ]) {
+      const flat = StyleSheet.flatten(getByTestId(id).props.style);
+      expect(flat.minHeight).toBeGreaterThanOrEqual(48);
+      expect(flat.minWidth).toBeGreaterThanOrEqual(48);
+    }
   });
 });
