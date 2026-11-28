@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, status
@@ -32,7 +33,9 @@ from app.schemas import (
     TransactionListResponse,
     TransactionResponse,
 )
+from app.settings import load_gemini_settings
 from app.voice_capture import (
+    UnavailableVoiceParser,
     VoiceCaptureDraft,
     VoiceCaptureRequest,
     VoiceCaptureService,
@@ -40,6 +43,7 @@ from app.voice_capture import (
     VoiceQuotaTracker,
     VoiceStorageHook,
 )
+from app.voice_gemini import GeminiVoiceParser, build_gemini_client
 
 
 class HealthResponse(BaseModel):
@@ -213,13 +217,6 @@ def create_app(
     voice_quota_tracker: VoiceQuotaTracker | None = None,
     voice_storage_hook: VoiceStorageHook | None = None,
 ) -> FastAPI:
-    application = FastAPI(
-        title="CARENTA Financial API",
-        version="0.1.0",
-        description="Deterministic budget calculation engine & FastAPI CRUD endpoints",
-    )
-    register_error_handlers(application)
-
     resolved_config = auth_config or load_auth_config()
     get_current_identity = make_current_identity_dependency(
         resolved_config, verifier=token_verifier
@@ -230,6 +227,38 @@ def create_app(
         quota_tracker=voice_quota_tracker,
         storage_hook=voice_storage_hook,
     )
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        gemini_client = None
+        if voice_parser is None:
+            gemini_settings = load_gemini_settings()
+            if gemini_settings is not None:
+                gemini_client = build_gemini_client(gemini_settings)
+                active_voice_service.set_parser(
+                    GeminiVoiceParser(
+                        client=gemini_client,
+                        model=gemini_settings.model,
+                        timeout_seconds=gemini_settings.timeout_ms / 1000.0,
+                    )
+                )
+        try:
+            yield
+        finally:
+            if gemini_client is not None:
+                active_voice_service.set_parser(UnavailableVoiceParser())
+                try:
+                    await gemini_client.aio.aclose()
+                finally:
+                    gemini_client.close()
+
+    application = FastAPI(
+        title="CARENTA Financial API",
+        version="0.1.0",
+        description="Deterministic budget calculation engine & FastAPI CRUD endpoints",
+        lifespan=lifespan,
+    )
+    register_error_handlers(application)
 
     @application.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:

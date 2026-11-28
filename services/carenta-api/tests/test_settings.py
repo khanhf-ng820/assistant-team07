@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from app.auth import SupabaseTokenVerifier, load_auth_config
 from app.main import create_app
 from app.repository import InMemoryRepository
-from app.settings import load_supabase_settings
+from app.settings import GeminiSettings, load_gemini_settings, load_supabase_settings
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 MOBILE_ROOT = SERVICE_ROOT.parents[1] / "apps" / "mobile"
@@ -173,3 +173,57 @@ def test_jwt_secret_only_verifies_hs256_jwt_without_supabase_url(
     assert res.status_code == 200
     assert res.json()["user_id"] == "student-hs-only"
     assert load_supabase_settings() is None
+
+
+def test_gemini_settings_unconfigured_returns_none():
+    assert load_gemini_settings({}) is None
+    assert load_gemini_settings({"GEMINI_API_KEY": "   "}) is None
+    assert load_gemini_settings({"CARENTA_GEMINI_MODEL": "gemini-3.5-flash-lite"}) is None
+
+
+def test_gemini_settings_loads_secret_and_defaults_without_exposing_key():
+    settings = load_gemini_settings({"GEMINI_API_KEY": "  AIza-fake-secret-key  "})
+    assert isinstance(settings, GeminiSettings)
+    assert settings.api_key.get_secret_value() == "AIza-fake-secret-key"
+    assert settings.model == "gemini-3.5-flash-lite"
+    assert settings.timeout_ms == 20_000
+    text = repr(settings) + str(settings)
+    assert "AIza-fake-secret-key" not in text
+
+
+def test_gemini_settings_model_override_and_empty_model_validation():
+    overridden = load_gemini_settings(
+        {
+            "GEMINI_API_KEY": "AIza-fake-secret-key",
+            "CARENTA_GEMINI_MODEL": " gemini-2.5-flash ",
+        }
+    )
+    assert overridden is not None
+    assert overridden.model == "gemini-2.5-flash"
+
+    with pytest.raises(ValueError, match="CARENTA_GEMINI_MODEL") as error:
+        load_gemini_settings(
+            {
+                "GEMINI_API_KEY": "AIza-fake-secret-key",
+                "CARENTA_GEMINI_MODEL": "   ",
+            }
+        )
+    assert "AIza-fake-secret-key" not in str(error.value)
+
+
+def test_env_example_documents_gemini_and_mobile_never_references_gemini_api_key():
+    example = (SERVICE_ROOT / ".env.example").read_text(encoding="utf-8")
+    assert "GEMINI_API_KEY=" in example
+    assert "CARENTA_GEMINI_MODEL=gemini-3.5-flash-lite" in example
+
+    files = [
+        p
+        for p in MOBILE_ROOT.rglob("*")
+        if p.is_file()
+        and "node_modules" not in p.parts
+        and p.suffix in {".ts", ".tsx", ".js", ".json", ".example"}
+    ]
+    assert files
+    for path in files:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        assert "GEMINI_API_KEY" not in text.upper(), path

@@ -650,6 +650,10 @@ class VoiceCaptureService:
         self._storage_hook = storage_hook
         self._clock = clock or (lambda: dt.datetime.now(VIETNAM_TZ))
 
+    def set_parser(self, parser: VoiceParserProtocol) -> None:
+        """Bind or replace the active VoiceParserProtocol implementation."""
+        self._parser = parser
+
     async def process_capture(
         self,
         *,
