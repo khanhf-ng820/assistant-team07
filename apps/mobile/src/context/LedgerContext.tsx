@@ -8,6 +8,11 @@ import {
   INITIAL_TRANSACTIONS,
 } from '../fixtures/initialLedger';
 import {
+  calculateOnboardingBudgetPreview,
+  type OnboardingProfile,
+} from '../onboarding/financialOnboarding';
+import { todayInVietnam } from '../savings/goal';
+import {
   DailyExpenseSummary,
   MonthlyBudgetSummary,
   Transaction,
@@ -29,6 +34,8 @@ interface LedgerDataContextType {
   getSummaryForDate: (date: string) => DailyExpenseSummary;
   dailyBudgetLimit: number;
   remainingTodayBudget: number;
+  onboardingProfile: OnboardingProfile | null;
+  applyOnboardingProfile: (profile: OnboardingProfile, today?: string) => void;
 }
 
 interface LedgerUIContextType {
@@ -52,6 +59,8 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
   const [activeYear, setActiveYear] = useState<number>(2024);
   const [activeMonth, setActiveMonth] = useState<number>(7);
   const [transactions, setTransactions] = useState<Transaction[]>(INITIAL_TRANSACTIONS);
+  const [dailyBudgetLimit, setDailyBudgetLimit] = useState<number>(DAILY_BUDGET_LIMIT);
+  const [onboardingProfile, setOnboardingProfile] = useState<OnboardingProfile | null>(null);
   const [isDaySheetOpen, setIsDaySheetOpen] = useState<boolean>(false);
   const [isManualEntryOpen, setIsManualEntryOpen] = useState<boolean>(false);
 
@@ -98,10 +107,27 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
+  const applyOnboardingProfile = useCallback(
+    (profile: OnboardingProfile, today?: string) => {
+      const effectiveToday = today ?? todayInVietnam();
+      const preview = calculateOnboardingBudgetPreview({
+        monthlyAllowanceVnd: profile.monthlyAllowanceVnd,
+        commitments: profile.commitments,
+        goal: profile.goal,
+        today: effectiveToday,
+      });
+
+      setOnboardingProfile(profile);
+      setAvailableBalance(profile.monthlyAllowanceVnd);
+      setDailyBudgetLimit(Math.max(0, preview.dailyAllowanceVnd));
+    },
+    []
+  );
+
   // Daily summaries dynamically generated for the active year and month
   const dailySummaries = useMemo(() => {
-    return generateMonthSummaries(activeYear, activeMonth, transactions, DAILY_BUDGET_LIMIT);
-  }, [activeYear, activeMonth, transactions]);
+    return generateMonthSummaries(activeYear, activeMonth, transactions, dailyBudgetLimit);
+  }, [activeYear, activeMonth, transactions, dailyBudgetLimit]);
 
   // Monthly summary derived directly and coherently from the daily aggregation
   const monthlySummary = useMemo(() => {
@@ -114,14 +140,14 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
         return dailySummaries[date];
       }
       const dayTxs = transactions.filter((tx) => tx.date === date);
-      return buildDailyExpenseSummary(date, dayTxs, DAILY_BUDGET_LIMIT);
+      return buildDailyExpenseSummary(date, dayTxs, dailyBudgetLimit);
     },
-    [dailySummaries, transactions]
+    [dailySummaries, transactions, dailyBudgetLimit]
   );
 
   const remainingTodayBudget = useMemo(() => {
-    return DAILY_BUDGET_LIMIT - getSummaryForDate(selectedDate).totalSpent;
-  }, [getSummaryForDate, selectedDate]);
+    return dailyBudgetLimit - getSummaryForDate(selectedDate).totalSpent;
+  }, [dailyBudgetLimit, getSummaryForDate, selectedDate]);
 
   const dataValue = useMemo<LedgerDataContextType>(() => {
     return {
@@ -138,8 +164,10 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
       monthlySummary,
       dailySummaries,
       getSummaryForDate,
-      dailyBudgetLimit: DAILY_BUDGET_LIMIT,
+      dailyBudgetLimit,
       remainingTodayBudget,
+      onboardingProfile,
+      applyOnboardingProfile,
     };
   }, [
     availableBalance,
@@ -154,7 +182,10 @@ export function LedgerProvider({ children }: { children: React.ReactNode }) {
     monthlySummary,
     dailySummaries,
     getSummaryForDate,
+    dailyBudgetLimit,
     remainingTodayBudget,
+    onboardingProfile,
+    applyOnboardingProfile,
   ]);
 
   const uiValue = useMemo<LedgerUIContextType>(() => {

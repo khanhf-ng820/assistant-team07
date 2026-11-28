@@ -186,6 +186,12 @@ import { useLedger } from '../context/LedgerContext';
 />
 ```
 
+### `<GoalDeadlinePickerModal>` & `<FinancialOnboardingScreen>` (`/onboarding`, Issue #54)
+Three-step student financial onboarding wizard (`Allowance` → `Commitments` → `Đặt Goal`):
+- Strictly budgeting-only presets (no food, pantry, recipe, or dietary preferences).
+- `GoalDeadlinePickerModal` renders a bottom-sheet calendar (`accessibilityViewIsModal`, `>= 48dp` day cells and month arrows) keeping a temporary `draftDate` until the user confirms; `Hủy` restores the prior deadline.
+- Deterministic feasibility card displays `Mức trích tiết kiệm đề xuất` (monthly 30-day projection and daily rate), `Có thể chi đến cuối tháng`, `Hạn mức chi mỗi ngày`, and explicit shortfall alerts (`colors.warningSoft` + `colors.text`).
+
 ---
 
 ## 6. Bottom Navigation Bar Architecture (`_layout.tsx`)
