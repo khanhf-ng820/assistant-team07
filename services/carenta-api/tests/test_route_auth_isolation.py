@@ -92,12 +92,15 @@ _BASE_FINANCIAL_ROUTES = [
     ),
     ("PATCH", "/goal", {"title": "Updated"}),
     ("POST", "/goal/allocate", {"amount": 10000}),
+    ("POST", "/capture/voice", {"audio_base64": "AAAA", "mime_type": "audio/m4a"}),
 ]
 
 FINANCIAL_ROUTES = [
     (method, f"{prefix}{suffix}", payload)
     for prefix in ("/api/v1", "/v1")
     for (method, suffix, payload) in _BASE_FINANCIAL_ROUTES
+] + [
+    ("POST", "/v1/captures/voice", {"audio_base64": "AAAA", "mime_type": "audio/m4a"}),
 ]
 
 
