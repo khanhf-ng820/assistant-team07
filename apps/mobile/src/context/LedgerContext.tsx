@@ -190,3 +190,9 @@ export function useLedger(): LedgerContextType {
   }
   return useMemo(() => ({ ...data, ...ui }), [data, ui]);
 }
+
+export function useOptionalLedger(): LedgerContextType | null {
+  const data = useContext(LedgerDataContext);
+  const ui = useContext(LedgerUIContext);
+  return useMemo(() => (data && ui ? { ...data, ...ui } : null), [data, ui]);
+}

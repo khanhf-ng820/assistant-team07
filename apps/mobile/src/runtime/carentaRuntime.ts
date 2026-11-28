@@ -13,6 +13,8 @@ import {
   type TransactionListQuery,
   type TransactionListResponse,
   type TransactionResponse,
+  type VoiceCaptureDraft,
+  type VoiceCaptureRequest,
   parseAuthIdentity,
   parseBudgetConfigResponse,
   parseBudgetSummary,
@@ -21,6 +23,7 @@ import {
   parseHealthResponse,
   parseTransaction,
   parseTransactionList,
+  parseVoiceCaptureDraft,
 } from '../api/contracts';
 import {
   ApiError,
@@ -50,6 +53,7 @@ import { type RawMobileEnv, resolveMobileConfig } from '../config';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const HEALTH_TIMEOUT_MS = 5_000;
+const VOICE_CAPTURE_TIMEOUT_MS = 25_000;
 const REFRESH_LEEWAY_SECONDS = 30;
 
 export interface RequestOptions {
@@ -115,6 +119,10 @@ export interface CarentaApiClient {
     today?: string,
     options?: RequestOptions
   ) => Promise<GoalResponse>;
+  parseVoiceCapture: (
+    payload: VoiceCaptureRequest,
+    options?: RequestOptions
+  ) => Promise<VoiceCaptureDraft>;
 }
 
 export type RuntimeAuthMode =
@@ -907,6 +915,13 @@ export function createCarentaRuntime(options: CarentaRuntimeOptions): CarentaRun
       requestJson(`/api/v1/goal/allocate${buildQuery({ today })}`, parseGoal, {
         method: 'POST',
         body: payload,
+        signal: reqOptions?.signal,
+      }),
+    parseVoiceCapture: (payload, reqOptions) =>
+      requestJson('/api/v1/capture/voice', parseVoiceCaptureDraft, {
+        method: 'POST',
+        body: payload,
+        timeoutMs: VOICE_CAPTURE_TIMEOUT_MS,
         signal: reqOptions?.signal,
       }),
   };
