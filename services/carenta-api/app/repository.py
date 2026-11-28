@@ -9,7 +9,7 @@ Architecture Note:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import datetime as dt
 import threading
 import uuid
@@ -20,6 +20,7 @@ from app.budget import (
     calculate_goal_projection,
     calculate_safe_to_spend,
 )
+from app.media import MediaKind
 from app.schemas import (
     BudgetSummaryResponse,
     GoalCreate,
@@ -60,6 +61,36 @@ class ActiveGoalExistsError(Exception):
     pass
 
 
+class MediaLinkError(Exception):
+    """Raised when capture media cannot be linked to an expense; nothing is written."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+@dataclass(frozen=True)
+class MediaRecord:
+    """Stored capture media metadata (mirrors ``public.capture_media``)."""
+
+    id: str
+    owner_id: str
+    kind: MediaKind
+    mime_type: str
+    size_bytes: int
+    sha256: str
+    storage_path: str
+    created_at: dt.datetime
+    expires_at: Optional[dt.datetime]
+    width: Optional[int] = None
+    height: Optional[int] = None
+    duration_ms: Optional[int] = None
+    transaction_id: Optional[str] = None
+    linked_at: Optional[dt.datetime] = None
+    purged_at: Optional[dt.datetime] = None
+
+
 @dataclass
 class _OwnerLedger:
     transactions: dict[str, dict] = field(default_factory=dict)
@@ -69,6 +100,7 @@ class _OwnerLedger:
     opening_balance: int = 0
     unpaid_commitments: int = 0
     savings_reserved: int = 0
+    media: dict[str, MediaRecord] = field(default_factory=dict)
 
 
 def _require_owner_id(user_id: str) -> str:
@@ -126,40 +158,151 @@ class InMemoryRepository:
         owner_id = _require_owner_id(user_id)
         with self._lock:
             ledger = self._get_or_create_ledger(owner_id)
-            # Check per-owner idempotency (matches SQL unique (owner_id, idempotency_key))
-            if data.idempotency_key in ledger.idempotency_map:
-                existing_id = ledger.idempotency_map[data.idempotency_key]
-                record = dict(ledger.transactions[existing_id])
-                # Plan §9: A retry with mismatched payload must return a conflict
-                if (
-                    record["amount"] != data.amount
-                    or record["kind"] != data.kind
-                    or record["category"] != data.category
-                    or record["date"] != data.date
-                    or record["note"] != data.note
-                ):
-                    raise IdempotencyConflictError(
-                        "Idempotency key conflict: payload does not match the original transaction"
-                    )
-                return TransactionResponse(**record)
-
-            tx_id = str(uuid.uuid4())
-            now = dt.datetime.now(dt.timezone.utc)
-            record = {
-                "id": tx_id,
-                "amount": data.amount,
-                "kind": data.kind,
-                "category": data.category,
-                "date": data.date,
-                "note": data.note,
-                "idempotency_key": data.idempotency_key,
-                "created_at": now,
-            }
-            ledger.transactions[tx_id] = record
-            ledger.idempotency_map[data.idempotency_key] = tx_id
-            snapshot = dict(record)
-
+            snapshot, _ = self._create_transaction_locked(ledger, data)
         return TransactionResponse(**snapshot)
+
+    @staticmethod
+    def _existing_for_key(ledger: _OwnerLedger, data: TransactionCreate) -> Optional[dict]:
+        """Return the transaction already stored for this idempotency key, if any."""
+        existing_id = ledger.idempotency_map.get(data.idempotency_key)
+        if existing_id is None:
+            return None
+        record = ledger.transactions[existing_id]
+        # Plan §9: A retry with mismatched payload must return a conflict
+        if (
+            record["amount"] != data.amount
+            or record["kind"] != data.kind
+            or record["category"] != data.category
+            or record["date"] != data.date
+            or record["note"] != data.note
+        ):
+            raise IdempotencyConflictError(
+                "Idempotency key conflict: payload does not match the original transaction"
+            )
+        return record
+
+    def _create_transaction_locked(
+        self, ledger: _OwnerLedger, data: TransactionCreate
+    ) -> tuple[dict, bool]:
+        """Insert under the caller's lock; returns (snapshot, created)."""
+        existing = self._existing_for_key(ledger, data)
+        if existing is not None:
+            return dict(existing), False
+
+        tx_id = str(uuid.uuid4())
+        now = dt.datetime.now(dt.timezone.utc)
+        record = {
+            "id": tx_id,
+            "amount": data.amount,
+            "kind": data.kind,
+            "category": data.category,
+            "date": data.date,
+            "note": data.note,
+            "idempotency_key": data.idempotency_key,
+            "created_at": now,
+        }
+        ledger.transactions[tx_id] = record
+        ledger.idempotency_map[data.idempotency_key] = tx_id
+        return dict(record), True
+
+    # --- Capture media (#52) ---
+
+    def register_media(self, record: MediaRecord) -> MediaRecord:
+        owner_id = _require_owner_id(record.owner_id)
+        with self._lock:
+            ledger = self._get_or_create_ledger(owner_id)
+            if record.id in ledger.media:
+                raise ValueError("Duplicate media id")
+            ledger.media[record.id] = record
+        return record
+
+    def get_media(self, user_id: str, media_id: str) -> Optional[MediaRecord]:
+        owner_id = _require_owner_id(user_id)
+        with self._lock:
+            ledger = self._ledgers.get(owner_id)
+            return ledger.media.get(media_id) if ledger else None
+
+    def create_expense_with_media(
+        self,
+        user_id: str,
+        data: TransactionCreate,
+        media_ids: list[str],
+        now: Optional[dt.datetime] = None,
+    ) -> TransactionResponse:
+        """Atomically record a confirmed expense and link its receipt/voice media.
+
+        Mirrors ``public.confirm_expense_with_media``: every media item must belong
+        to the caller, be unlinked, unexpired and not purged, or nothing is written.
+        A retry with the same idempotency key, payload and exactly the same media
+        set returns the original transaction; any other set is a conflict. Linked
+        media becomes due for deletion at once (plan §10: do not keep raw receipts
+        or audio after success); the record keeps the link and the file hash.
+        """
+        owner_id = _require_owner_id(user_id)
+        current = now or dt.datetime.now(dt.timezone.utc)
+        wanted = list(dict.fromkeys(media_ids))
+        if data.kind != "expense":
+            raise MediaLinkError("MEDIA_NOT_EXPENSE", "Media can only be attached to an expense.")
+        if not wanted:
+            raise MediaLinkError("MEDIA_NOT_FOUND", "At least one capture media item is required.")
+
+        with self._lock:
+            ledger = self._get_or_create_ledger(owner_id)
+            items = [ledger.media.get(media_id) for media_id in wanted]
+            if any(item is None for item in items):
+                raise MediaLinkError("MEDIA_NOT_FOUND", "Capture media not found.")
+
+            existing = self._existing_for_key(ledger, data)
+            if existing is not None:
+                attached = {m.id for m in ledger.media.values() if m.transaction_id == existing["id"]}
+                if attached == set(wanted):
+                    return TransactionResponse(**dict(existing))
+                raise IdempotencyConflictError(
+                    "Idempotency key conflict: payload does not match the original transaction"
+                )
+
+            for item in items:
+                if item.transaction_id is not None:
+                    raise MediaLinkError(
+                        "MEDIA_ALREADY_LINKED", "Capture media is already attached to an expense."
+                    )
+                if item.purged_at is not None or (
+                    item.expires_at is not None and item.expires_at <= current
+                ):
+                    raise MediaLinkError("MEDIA_EXPIRED", "Capture media has expired; capture it again.")
+
+            snapshot, _ = self._create_transaction_locked(ledger, data)
+            for item in items:
+                ledger.media[item.id] = replace(
+                    item,
+                    transaction_id=snapshot["id"],
+                    linked_at=current,
+                    expires_at=current,  # plan §10: purge the file once the expense is saved
+                )
+        return TransactionResponse(**snapshot)
+
+    def expired_media_paths(self, now: dt.datetime) -> list[str]:
+        """Storage paths of media past ``expires_at`` that have not been purged yet."""
+        with self._lock:
+            return [
+                item.storage_path
+                for ledger in self._ledgers.values()
+                for item in ledger.media.values()
+                if not item.purged_at and item.expires_at is not None and item.expires_at <= now
+            ]
+
+    def mark_media_purged(self, paths: list[str], now: dt.datetime) -> None:
+        """After storage deletion: drop unlinked records, keep linked ones as purged."""
+        wanted = set(paths)
+        with self._lock:
+            for ledger in self._ledgers.values():
+                for media_id, item in list(ledger.media.items()):
+                    if item.storage_path not in wanted:
+                        continue
+                    if item.transaction_id is None:
+                        del ledger.media[media_id]
+                    else:
+                        ledger.media[media_id] = replace(item, purged_at=now)
 
     def list_transactions(
         self,

@@ -35,7 +35,7 @@ uv sync --project services/carenta-api --locked --python 3.12
 uv run --project services/carenta-api --env-file services/carenta-api/.env uvicorn app.main:app --app-dir services/carenta-api --host 0.0.0.0 --port 8000
 ```
 
-Phase 1 financial routes enforce `get_current_identity` and isolate state per `Student Identity` (`user_id`) inside `InMemoryRepository` (mirroring `#42`'s `owner_id` invariants); live Supabase Postgres persistence is tracked separately. There is no Gemini integration or media upload yet. `days_remaining` is derived from `today` in Asia/Ho_Chi_Minh (inclusive to month-end); use the `days_remaining` query parameter on `/budget/summary` to override it per request.
+Phase 1 financial routes enforce `get_current_identity` and isolate state per `Student Identity` (`user_id`) inside `InMemoryRepository` (mirroring `#42`'s `owner_id` invariants); live Supabase Postgres persistence is tracked separately. There is no Gemini integration yet; receipt/voice media handling (#52) is described below, and its upload endpoints arrive with #48/#49. `days_remaining` is derived from `today` in Asia/Ho_Chi_Minh (inclusive to month-end); use the `days_remaining` query parameter on `/budget/summary` to override it per request.
 
 For unauthenticated LAN testing without Supabase env vars configured, set `CARENTA_LOCAL_DEV_AUTH=true` in `.env` (automatically ignored whenever `SUPABASE_URL` or `SUPABASE_JWT_SECRET` is set).
 
@@ -64,6 +64,48 @@ requires all three DB/admin variables (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, and
 issuer is derived from `SUPABASE_URL`. The service-role key bypasses RLS: never
 copy it into `apps/mobile` or an `EXPO_PUBLIC_*` variable; a test checks that the
 mobile sources do not reference it.
+
+## Capture media storage and sanitization (issue #52)
+
+Receipt photos and voice clips are handled by three modules. Their upload routes
+belong to the OCR and voice issues (#48/#49), so this adds no new endpoints:
+
+- `app/media.py` checks the real file type from the bytes (the client's file
+  name and Content-Type are not trusted). Receipts must be one JPEG or PNG of at
+  most 5 MB, 32 to 10,000 px per side and at most 40 MP. Voice clips must be
+  M4A (MP4/AAC, what `expo-audio` records) with an audio track, at most 2 MB
+  and 30 seconds. Damaged
+  files and mismatched declared types are rejected with stable codes such as
+  `MEDIA_UNSUPPORTED_TYPE`, `MEDIA_TYPE_MISMATCH`, `MEDIA_CORRUPT` and
+  `MEDIA_TOO_LONG`. Metadata is removed before storage: JPEG EXIF/XMP and
+  comments (the scan is walked to the real end-of-image marker, so appended
+  data is dropped), PNG text/EXIF/time chunks, M4A `udta`/`meta` boxes in
+  `moov` and each `trak` (blanked in place, 32- and 64-bit sizes, so audio
+  offsets stay valid). Only the standard library is used.
+- `app/media_storage.py` uploads to the private `capture-media` Supabase
+  Storage bucket with the backend service-role key, at server-generated paths
+  `{owner_id}/{kind}/{media_id}.{ext}`. Errors never contain keys. The
+  service-role key is used only for these backend-validated uploads and
+  deletions in the private bucket (plan §6); all other data access goes
+  through the student's JWT and RLS.
+  `InMemoryMediaStorage` is used in tests and Local Dev Mode.
+- `app/capture_media.py` (`store_capture_media`, `purge_expired_media`) and
+  `InMemoryRepository.create_expense_with_media` store media per student and
+  link it to a confirmed expense atomically. Everything must belong to the
+  caller and be unlinked, unexpired and not purged, or nothing is written. A
+  retry must repeat the same payload and exactly the same media set to get the
+  same expense back; anything else is an idempotency conflict. All media is
+  temporary (plan §10): unconfirmed files expire after 24 hours, and confirming
+  an expense makes its files due for deletion at once, keeping only metadata,
+  the hash and the link. Calling `purge_expired_media` on a schedule is left to
+  the capture endpoints (#48/#49).
+
+The database side is `supabase/migrations/20261126000000_capture_media.sql`:
+the `capture_media` table (read-only for students: only the backend's service
+role can register rows; per-kind size/type/duration checks; same-owner foreign
+key to `transactions`), the `confirm_expense_with_media()`
+function that inserts the expense and links its media in one transaction, and
+the private bucket with a read policy limited to the student's own folder.
 
 ## Phone connection
 
