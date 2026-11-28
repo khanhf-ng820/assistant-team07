@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import datetime as dt
-import struct
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
@@ -21,6 +20,7 @@ from app.voice_capture import (
     normalize_voice_draft,
     parse_vietnamese_amount,
 )
+from tests.voice_test_helpers import make_box as _box, make_m4a_bytes as _make_m4a_bytes, make_wav_bytes
 
 TEST_SECRET = "test-hmac-secret-at-least-32-bytes-long"
 TEST_ISSUER = "https://proj.supabase.co/auth/v1"
@@ -38,33 +38,6 @@ def _make_token(sub: str = "student-a") -> str:
         "exp": int((now + dt.timedelta(seconds=3600)).timestamp()),
     }
     return jwt.encode(claims, TEST_SECRET, algorithm="HS256")
-
-
-def _box(box_type: bytes, payload: bytes) -> bytes:
-    return struct.pack(">I", 8 + len(payload)) + box_type + payload
-
-
-def _make_m4a_bytes(
-    *,
-    timescale: int = 1000,
-    duration: int = 4000,
-    brand: bytes = b"M4A ",
-    mvhd_version: int = 0,
-    moov_extra_boxes: bytes = b"",
-    top_extra_boxes: bytes = b"",
-    mdat_payload: bytes = b"\x11\x22\x33\x44",
-) -> bytes:
-    ftyp = _box(b"ftyp", brand + b"\x00\x00\x00\x00" + brand)
-    if mvhd_version == 0:
-        mvhd_payload = struct.pack(">IIIIII", 0, 0, 0, timescale, duration, 0x00010000) + b"\x00" * 76
-    else:
-        mvhd_payload = (
-            struct.pack(">B3sQQIQ", 1, b"\x00\x00\x00", 0, 0, timescale, duration)
-            + b"\x00" * 80
-        )
-    moov = _box(b"moov", _box(b"mvhd", mvhd_payload) + moov_extra_boxes)
-    mdat = _box(b"mdat", mdat_payload)
-    return ftyp + top_extra_boxes + moov + mdat
 
 
 def _parse_box_headers(data: bytes) -> list[tuple[bytes, bytes]]:
@@ -690,3 +663,38 @@ def test_normalize_voice_draft_maps_vietnamese_category_and_flags_unknown_catego
     assert invalid_cat.category is None
     assert "category" in invalid_cat.uncertain_fields
     assert invalid_cat.has_low_confidence is True
+
+
+def test_voice_capture_enforces_wav_container_duration_when_duration_ms_omitted():
+    fake_parser = _FakeVoiceParser({"recognized_text": "Cà phê 25k", "amount": 25000})
+    app = create_app(
+        auth_config=AuthConfig(local_dev_auth=True),
+        voice_parser=fake_parser,
+    )
+
+    valid_wav = make_wav_bytes(duration_ms=2500, extra_chunks=b"LIST\x03\x00\x00\x00abc\x00")
+    ok_res = _request(
+        app,
+        "POST",
+        "/api/v1/capture/voice",
+        json={
+            "audio_base64": base64.b64encode(valid_wav).decode("ascii"),
+            "mime_type": "audio/wav",
+        },
+    )
+    assert ok_res.status_code == 200
+    assert fake_parser.calls[-1][2] == 2500
+
+    overlong_wav = make_wav_bytes(duration_ms=30_001)
+    too_long_res = _request(
+        app,
+        "POST",
+        "/api/v1/capture/voice",
+        json={
+            "audio_base64": base64.b64encode(overlong_wav).decode("ascii"),
+            "mime_type": "audio/wav",
+        },
+    )
+    assert too_long_res.status_code == 422
+    assert too_long_res.json()["error"]["code"] == "VOICE_DURATION_EXCEEDED"
+    assert len(fake_parser.calls) == 1

@@ -101,9 +101,17 @@ describe('Voice Capture mobile contracts and error mapping', () => {
       'VOICE_DURATION_EXCEEDED',
       'VOICE_RATE_LIMITED',
       'VOICE_PARSER_UNAVAILABLE',
+      'VOICE_PROVIDER_UNAVAILABLE',
+      'VOICE_PROVIDER_ERROR',
     ]) {
       const status =
-        code === 'VOICE_RATE_LIMITED' ? 429 : code === 'VOICE_PARSER_UNAVAILABLE' ? 503 : 422;
+        code === 'VOICE_RATE_LIMITED'
+          ? 429
+          : code === 'VOICE_PARSER_UNAVAILABLE' || code === 'VOICE_PROVIDER_UNAVAILABLE'
+            ? 503
+            : code === 'VOICE_PROVIDER_ERROR'
+              ? 502
+              : 422;
       const err = normalizeHttpError(status, {
         error: { code, message: 'err', request_id: 'r3' },
       });
@@ -111,6 +119,9 @@ describe('Voice Capture mobile contracts and error mapping', () => {
       expect(err.userMessage.length).toBeGreaterThan(10);
       expect(err.userMessage).not.toBe('Không thể hoàn tất yêu cầu.');
       expect(err.userMessage).not.toBe('Máy chủ đang bận, vui lòng thử lại sau.');
+      if (status >= 500 || status === 429) {
+        expect(err.retryable).toBe(true);
+      }
     }
   });
 });

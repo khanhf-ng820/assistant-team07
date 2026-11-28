@@ -171,6 +171,40 @@ def _extract_mvhd_duration_ms(buf: bytearray, payload_start: int, box_end: int) 
     return (duration * 1000) // timescale
 
 
+def _extract_wav_duration_ms(data: bytes) -> int | None:
+    """Compute WAV duration from fmt byte_rate and data chunk size when both chunks exist."""
+    pos = 12
+    byte_rate: int | None = None
+    data_size: int | None = None
+
+    while pos + 8 <= len(data):
+        chunk_id = data[pos : pos + 4]
+        chunk_size = int.from_bytes(data[pos + 4 : pos + 8], "little")
+        payload_start = pos + 8
+        payload_end = payload_start + chunk_size
+
+        if chunk_id == b"fmt " and chunk_size >= 16 and payload_end <= len(data):
+            byte_rate = int.from_bytes(data[payload_start + 8 : payload_start + 12], "little")
+            if byte_rate <= 0:
+                raise ApiHttpError(422, "VOICE_INVALID_AUDIO", "Invalid WAV byte rate.")
+        elif chunk_id == b"data":
+            data_size = chunk_size
+
+        pos = payload_end + (chunk_size % 2)
+
+    if byte_rate is None or data_size is None:
+        return None
+    if data_size <= 0:
+        raise ApiHttpError(422, "VOICE_INVALID_AUDIO", "Invalid WAV audio duration.")
+    if data_size * 1000 > MAX_VOICE_DURATION_MS * byte_rate:
+        raise ApiHttpError(
+            422,
+            "VOICE_DURATION_EXCEEDED",
+            "Voice recording exceeds maximum duration of 30 seconds.",
+        )
+    return (data_size * 1000) // byte_rate
+
+
 def _validate_and_strip_isobmff(data: bytes) -> tuple[bytes, int]:
     buf = bytearray(data)
     top_boxes = _iter_isobmff_boxes(buf, 0, len(buf))
@@ -242,6 +276,10 @@ def validate_and_strip_voice_audio(
         sanitized_bytes, container_duration_ms = _validate_and_strip_isobmff(decoded)
         if resolved_duration_ms is None:
             resolved_duration_ms = container_duration_ms
+    elif normalized_mime == "audio/wav":
+        wav_duration_ms = _extract_wav_duration_ms(decoded)
+        if resolved_duration_ms is None:
+            resolved_duration_ms = wav_duration_ms
 
     return ValidatedVoiceAudio(
         audio_bytes=sanitized_bytes,

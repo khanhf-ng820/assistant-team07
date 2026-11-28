@@ -26,6 +26,8 @@ export type ApiErrorCode =
   | 'VOICE_DURATION_EXCEEDED'
   | 'VOICE_RATE_LIMITED'
   | 'VOICE_PARSER_UNAVAILABLE'
+  | 'VOICE_PROVIDER_UNAVAILABLE'
+  | 'VOICE_PROVIDER_ERROR'
   | 'VOICE_TIMEOUT'
   | 'STORAGE_READ_FAILED'
   | 'STORAGE_WRITE_FAILED'
@@ -98,6 +100,10 @@ const VIETNAMESE_CODE_MESSAGES: Record<string, string> = {
     'Bạn đã dùng hết lượt ghi âm hôm nay, vui lòng thử lại vào ngày mai hoặc nhập tay.',
   VOICE_PARSER_UNAVAILABLE:
     'Dịch vụ nhận diện giọng nói tạm thời chưa sẵn sàng, vui lòng thử lại hoặc nhập tay.',
+  VOICE_PROVIDER_UNAVAILABLE:
+    'Dịch vụ nhận diện giọng nói tạm thời gián đoạn, vui lòng thử lại hoặc nhập tay.',
+  VOICE_PROVIDER_ERROR:
+    'Dịch vụ nhận diện giọng nói gặp sự cố, vui lòng thử lại hoặc nhập tay.',
   VOICE_TIMEOUT: 'Xử lý giọng nói quá thời gian, vui lòng thử lại.',
   STORAGE_READ_FAILED: 'Không thể đọc phiên đăng nhập từ bộ nhớ bảo mật. Vui lòng thử lại.',
   STORAGE_WRITE_FAILED: 'Không thể lưu phiên đăng nhập vào bộ nhớ bảo mật. Vui lòng thử lại.',

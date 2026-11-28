@@ -268,4 +268,60 @@ describe('useExpoVoiceRecorderAdapter', () => {
     expect(mockSetAudioModeAsync).toHaveBeenLastCalledWith({ allowsRecording: false });
     expect(mockFileInstances.get('file:///tmp/voice-capture.m4a')?.delete).toHaveBeenCalledTimes(1);
   });
+
+  it('falls back to JS elapsed duration on fast stop (durationMillis: 0) and clamps overshoot past 30s to 30_000', async () => {
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date('2026-11-28T10:00:00.000Z'));
+      const { result } = await renderHook(() => useExpoVoiceRecorderAdapter());
+
+      mockRecorderState.isRecording = true;
+      mockRecorderState.durationMillis = 0;
+      await act(async () => {
+        await result.current.start();
+      });
+      await act(async () => {
+        jest.advanceTimersByTime(45);
+      });
+
+      let fastStopResult: Awaited<ReturnType<typeof result.current.stop>> = null;
+      await act(async () => {
+        fastStopResult = await result.current.stop();
+      });
+      expect(fastStopResult).toEqual({
+        uri: 'file:///tmp/voice-capture.m4a',
+        durationMillis: 45,
+        mimeType: 'audio/m4a',
+      });
+
+      await act(async () => {
+        await result.current.start();
+      });
+      let zeroElapsedResult: Awaited<ReturnType<typeof result.current.stop>> = null;
+      await act(async () => {
+        zeroElapsedResult = await result.current.stop();
+      });
+      expect(zeroElapsedResult).toEqual({
+        uri: 'file:///tmp/voice-capture.m4a',
+        durationMillis: 1,
+        mimeType: 'audio/m4a',
+      });
+
+      mockRecorderState.durationMillis = 30_080;
+      await act(async () => {
+        await result.current.start();
+      });
+      let overshootResult: Awaited<ReturnType<typeof result.current.stop>> = null;
+      await act(async () => {
+        overshootResult = await result.current.stop();
+      });
+      expect(overshootResult).toEqual({
+        uri: 'file:///tmp/voice-capture.m4a',
+        durationMillis: 30_000,
+        mimeType: 'audio/m4a',
+      });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });

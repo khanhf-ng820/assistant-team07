@@ -24,15 +24,16 @@ import {
 } from '../../context/VoiceCaptureContext';
 import type { RequestOptions } from '../../runtime/carentaRuntime';
 import { colors, radius, shadows, spacing, typography } from '../../theme';
-import { CATEGORIES, formatIsoDate } from '../../types/transaction';
+import { CATEGORIES, formatIsoDate, type CategoryId } from '../../types/transaction';
 import {
+  clampRecordingDurationMs,
   useExpoVoiceRecorderAdapter,
   type VoicePermissionResult,
   type VoiceRecorderAdapter,
   type VoiceRecordingResult,
 } from '../../voice/voiceRecorderAdapter';
 import { Button } from '../Button';
-import { VoiceDraftReviewSheet } from './VoiceDraftReviewSheet';
+import { hasValidConfirmableDraft, VoiceDraftReviewSheet } from './VoiceDraftReviewSheet';
 import { VoiceRecordingBar } from './VoiceRecordingBar';
 
 export type VoiceCaptureStage = VoiceCaptureFlowState;
@@ -62,6 +63,11 @@ interface VoiceCaptureModalBodyProps {
 }
 
 type ErrorSubstate = 'permission_denied' | 'permission_blocked' | 'api_or_recorder';
+
+type PermissionOutcome =
+  | { kind: 'granted' }
+  | { kind: 'denied'; canAskAgain: boolean }
+  | { kind: 'error'; message: string };
 
 const REVEAL_STEP_MS = 40;
 const REVEAL_HOLD_MS = 80;
@@ -122,6 +128,55 @@ function formatCurrentIsoDate(): string {
   return formatIsoDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
 }
 
+async function ensureMicPermission(
+  adapter: VoiceRecorderAdapter,
+  isRetry: boolean
+): Promise<PermissionOutcome> {
+  try {
+    const current = await adapter.getPermission();
+    if (current.granted) {
+      return { kind: 'granted' };
+    }
+    if (!current.canAskAgain && !isRetry) {
+      return { kind: 'denied', canAskAgain: false };
+    }
+    const requested: VoicePermissionResult = await adapter.requestPermission();
+    if (requested.granted) {
+      return { kind: 'granted' };
+    }
+    return { kind: 'denied', canAskAgain: requested.canAskAgain };
+  } catch {
+    return { kind: 'error', message: 'Không thể kiểm tra quyền truy cập micro.' };
+  }
+}
+
+function draftToTransactionInput(
+  draft: VoiceDraftLike,
+  fallbackDate: string
+): {
+  amount: number;
+  categoryId: CategoryId;
+  note: string;
+  date: string;
+  time: string;
+} {
+  const categoryId = draft.category ?? 'other';
+  const categoryInfo = CATEGORIES[categoryId] ?? CATEGORIES.other;
+  const resolvedNote =
+    draft.description?.trim() ||
+    draft.merchant?.trim() ||
+    draft.recognized_text?.trim() ||
+    categoryInfo.name;
+
+  return {
+    amount: draft.amount as number,
+    categoryId,
+    note: resolvedNote,
+    date: draft.occurred_on ?? fallbackDate,
+    time: extractTimeFromDraft(draft),
+  };
+}
+
 function VoiceCaptureModalBody({
   adapter,
   parseVoiceCapture,
@@ -136,15 +191,19 @@ function VoiceCaptureModalBody({
   const manualEntryHandler = onOpenManualEntry ?? ledger?.openManualEntry;
   const effectiveParseVoiceCapture = parseVoiceCapture ?? auth?.apiClient.parseVoiceCapture;
 
-  const [localFlowState, setLocalFlowState] = useState<VoiceCaptureFlowState>(
-    'requesting_permission'
-  );
-  const [localDraft, setLocalDraft] = useState<VoiceDraftLike | null>(null);
-  const [localErrorMessage, setLocalErrorMessage] = useState<string | null>(null);
+  const [fallbackState, setFallbackState] = useState<{
+    flowState: VoiceCaptureFlowState;
+    draft: VoiceDraftLike | null;
+    errorMessage: string | null;
+  }>({
+    flowState: 'requesting_permission',
+    draft: null,
+    errorMessage: null,
+  });
 
-  const flowState = voiceContext?.flowState ?? localFlowState;
-  const activeDraft = voiceContext?.draft ?? localDraft;
-  const activeErrorMessage = voiceContext?.errorMessage ?? localErrorMessage;
+  const flowState = voiceContext ? voiceContext.flowState : fallbackState.flowState;
+  const activeDraft = voiceContext ? voiceContext.draft : fallbackState.draft;
+  const activeErrorMessage = voiceContext ? voiceContext.errorMessage : fallbackState.errorMessage;
 
   const voiceContextRef = useRef(voiceContext);
   useEffect(() => {
@@ -152,18 +211,27 @@ function VoiceCaptureModalBody({
   }, [voiceContext]);
 
   const setFlowState = useCallback((next: VoiceCaptureFlowState) => {
-    setLocalFlowState(next);
-    voiceContextRef.current?.setFlowState(next);
+    if (voiceContextRef.current) {
+      voiceContextRef.current.setFlowState(next);
+    } else {
+      setFallbackState((prev) => ({ ...prev, flowState: next }));
+    }
   }, []);
 
   const setActiveDraft = useCallback((next: VoiceDraftLike | null) => {
-    setLocalDraft(next);
-    voiceContextRef.current?.setDraft(next);
+    if (voiceContextRef.current) {
+      voiceContextRef.current.setDraft(next);
+    } else {
+      setFallbackState((prev) => ({ ...prev, draft: next }));
+    }
   }, []);
 
   const setActiveError = useCallback((message: string | null) => {
-    setLocalErrorMessage(message);
-    voiceContextRef.current?.setErrorMessage(message);
+    if (voiceContextRef.current) {
+      voiceContextRef.current.setErrorMessage(message);
+    } else {
+      setFallbackState((prev) => ({ ...prev, errorMessage: message }));
+    }
   }, []);
 
   const [errorSubstate, setErrorSubstate] = useState<ErrorSubstate>('api_or_recorder');
@@ -178,6 +246,7 @@ function VoiceCaptureModalBody({
   const capturedRef = useRef<VoiceRecordingResult | null>(null);
   const uploadAbortRef = useRef<AbortController | null>(null);
   const revealTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recordingStartedAtMsRef = useRef<number | null>(null);
   const isMountedRef = useRef(true);
 
   useEffect(() => {
@@ -195,6 +264,16 @@ function VoiceCaptureModalBody({
   useEffect(() => {
     capturedRef.current = capturedRecording;
   }, [capturedRecording]);
+
+  useEffect(() => {
+    if (flowState === 'recording') {
+      if (recordingStartedAtMsRef.current === null) {
+        recordingStartedAtMsRef.current = Date.now();
+      }
+    } else {
+      recordingStartedAtMsRef.current = null;
+    }
+  }, [flowState]);
 
   const clearRevealTimer = useCallback(() => {
     if (revealTimeoutRef.current !== null) {
@@ -218,144 +297,6 @@ function VoiceCaptureModalBody({
     }
   }, []);
 
-  const applyPermissionResult = useCallback(
-    (result: VoicePermissionResult) => {
-      if (result.granted) {
-        setErrorSubstate('api_or_recorder');
-        setFlowState('recording');
-        return;
-      }
-      setErrorSubstate(result.canAskAgain ? 'permission_denied' : 'permission_blocked');
-      setFlowState('error');
-    },
-    [setFlowState]
-  );
-
-  const ensurePermissionAndStart = useCallback(
-    async (isRetry: boolean) => {
-      abortInFlightUpload();
-      clearRevealTimer();
-      setIsCapturedFallback(false);
-      setIsOfflineError(false);
-      setRevealedText('');
-      setActiveDraft(null);
-      if (isRetry) {
-        setFlowState('requesting_permission');
-        setActiveError(null);
-        setErrorSubstate('api_or_recorder');
-      }
-      try {
-        const current = await adapterRef.current.getPermission();
-        if (!isMountedRef.current) return;
-        if (current.granted) {
-          setFlowState('recording');
-          return;
-        }
-        if (!current.canAskAgain && !isRetry) {
-          setErrorSubstate('permission_blocked');
-          setFlowState('error');
-          return;
-        }
-        const requested = await adapterRef.current.requestPermission();
-        if (!isMountedRef.current) return;
-        applyPermissionResult(requested);
-      } catch {
-        if (!isMountedRef.current) return;
-        setErrorSubstate('api_or_recorder');
-        setActiveError('Không thể kiểm tra quyền truy cập micro.');
-        setFlowState('error');
-      }
-    },
-    [
-      abortInFlightUpload,
-      applyPermissionResult,
-      clearRevealTimer,
-      setActiveDraft,
-      setActiveError,
-      setFlowState,
-    ]
-  );
-
-  useEffect(() => {
-    isMountedRef.current = true;
-    const runInitialPermissionCheck = async () => {
-      try {
-        const current = await adapterRef.current.getPermission();
-        if (!isMountedRef.current) return;
-        if (current.granted) {
-          setFlowState('recording');
-          return;
-        }
-        if (!current.canAskAgain) {
-          setErrorSubstate('permission_blocked');
-          setFlowState('error');
-          return;
-        }
-        const requested = await adapterRef.current.requestPermission();
-        if (!isMountedRef.current) return;
-        applyPermissionResult(requested);
-      } catch {
-        if (!isMountedRef.current) return;
-        setErrorSubstate('api_or_recorder');
-        setActiveError('Không thể kiểm tra quyền truy cập micro.');
-        setFlowState('error');
-      }
-    };
-    void runInitialPermissionCheck();
-
-    return () => {
-      isMountedRef.current = false;
-      abortInFlightUpload();
-      clearRevealTimer();
-      if (capturedRef.current) {
-        adapterRef.current.deleteTempFile(capturedRef.current.uri);
-        capturedRef.current = null;
-      }
-    };
-  }, [abortInFlightUpload, applyPermissionResult, clearRevealTimer, setActiveError, setFlowState]);
-
-  const startProgressiveReveal = useCallback(
-    (parsedDraft: VoiceCaptureDraft) => {
-      clearRevealTimer();
-      const steps = buildRevealSteps(parsedDraft.recognized_text);
-      setFlowState('revealing');
-
-      const finishToReview = () => {
-        if (!isMountedRef.current) return;
-        setActiveDraft(parsedDraft);
-        setFlowState('review');
-        onDraftReadyRef.current?.(parsedDraft);
-      };
-
-      if (steps.length === 0) {
-        setRevealedText('');
-        revealTimeoutRef.current = setTimeout(finishToReview, REVEAL_HOLD_MS);
-        return;
-      }
-
-      setRevealedText(steps[0]);
-      let stepIndex = 1;
-
-      const scheduleNext = () => {
-        if (!isMountedRef.current) return;
-        if (stepIndex < steps.length) {
-          const nextValue = steps[stepIndex];
-          stepIndex += 1;
-          revealTimeoutRef.current = setTimeout(() => {
-            if (!isMountedRef.current) return;
-            setRevealedText(nextValue);
-            scheduleNext();
-          }, REVEAL_STEP_MS);
-        } else {
-          revealTimeoutRef.current = setTimeout(finishToReview, REVEAL_HOLD_MS);
-        }
-      };
-
-      scheduleNext();
-    },
-    [clearRevealTimer, setActiveDraft, setFlowState]
-  );
-
   const handleClose = useCallback(() => {
     abortInFlightUpload();
     clearRevealTimer();
@@ -376,6 +317,89 @@ function VoiceCaptureModalBody({
     setFlowState,
   ]);
 
+  const applyPermissionOutcome = useCallback(
+    (outcome: PermissionOutcome) => {
+      if (outcome.kind === 'granted') {
+        setErrorSubstate('api_or_recorder');
+        setFlowState('recording');
+      } else if (outcome.kind === 'denied') {
+        setErrorSubstate(outcome.canAskAgain ? 'permission_denied' : 'permission_blocked');
+        setFlowState('error');
+      } else {
+        setErrorSubstate('api_or_recorder');
+        setActiveError(outcome.message);
+        setFlowState('error');
+      }
+    },
+    [setActiveError, setFlowState]
+  );
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    void ensureMicPermission(adapterRef.current, false).then((outcome) => {
+      if (isMountedRef.current) {
+        applyPermissionOutcome(outcome);
+      }
+    });
+
+    return () => {
+      isMountedRef.current = false;
+      abortInFlightUpload();
+      clearRevealTimer();
+      if (capturedRef.current) {
+        adapterRef.current.deleteTempFile(capturedRef.current.uri);
+        capturedRef.current = null;
+      }
+    };
+  }, [abortInFlightUpload, applyPermissionOutcome, clearRevealTimer]);
+
+  const startProgressiveReveal = useCallback(
+    (parsedDraft: VoiceCaptureDraft) => {
+      clearRevealTimer();
+      const steps = buildRevealSteps(parsedDraft.recognized_text);
+      setFlowState('revealing');
+
+      const finishReveal = () => {
+        if (!isMountedRef.current) return;
+        const externalDraftHandler = onDraftReadyRef.current;
+        if (externalDraftHandler) {
+          handleClose();
+          externalDraftHandler(parsedDraft);
+          return;
+        }
+        setActiveDraft(parsedDraft);
+        setFlowState('review');
+      };
+
+      if (steps.length === 0) {
+        setRevealedText('');
+        revealTimeoutRef.current = setTimeout(finishReveal, REVEAL_HOLD_MS);
+        return;
+      }
+
+      setRevealedText(steps[0]);
+      let stepIndex = 1;
+
+      const scheduleNext = () => {
+        if (!isMountedRef.current) return;
+        if (stepIndex < steps.length) {
+          const nextValue = steps[stepIndex];
+          stepIndex += 1;
+          revealTimeoutRef.current = setTimeout(() => {
+            if (!isMountedRef.current) return;
+            setRevealedText(nextValue);
+            scheduleNext();
+          }, REVEAL_STEP_MS);
+        } else {
+          revealTimeoutRef.current = setTimeout(finishReveal, REVEAL_HOLD_MS);
+        }
+      };
+
+      scheduleNext();
+    },
+    [clearRevealTimer, handleClose, setActiveDraft, setFlowState]
+  );
+
   const handleManualFallback = useCallback(() => {
     handleClose();
     manualEntryHandler?.();
@@ -383,6 +407,12 @@ function VoiceCaptureModalBody({
 
   const handleRecordingComplete = useCallback(
     async (result: VoiceRecordingResult) => {
+      const elapsedMs =
+        recordingStartedAtMsRef.current !== null
+          ? Math.max(1, Date.now() - recordingStartedAtMsRef.current)
+          : 1;
+      recordingStartedAtMsRef.current = null;
+
       onRecordingComplete?.(result);
 
       const parseFn = parseRef.current;
@@ -418,7 +448,7 @@ function VoiceCaptureModalBody({
           {
             audio_base64: audioBase64,
             mime_type: result.mimeType || 'audio/m4a',
-            duration_ms: result.durationMillis,
+            duration_ms: clampRecordingDurationMs(result.durationMillis, elapsedMs),
           },
           { signal: abortController.signal }
         );
@@ -470,35 +500,38 @@ function VoiceCaptureModalBody({
 
   const handleRetryRecording = useCallback(() => {
     cleanupCapturedTempFile();
-    void ensurePermissionAndStart(true);
-  }, [cleanupCapturedTempFile, ensurePermissionAndStart]);
+    abortInFlightUpload();
+    clearRevealTimer();
+    setIsCapturedFallback(false);
+    setIsOfflineError(false);
+    setRevealedText('');
+    setActiveDraft(null);
+    setFlowState('requesting_permission');
+    setActiveError(null);
+    setErrorSubstate('api_or_recorder');
+    void ensureMicPermission(adapterRef.current, true).then((outcome) => {
+      if (isMountedRef.current) {
+        applyPermissionOutcome(outcome);
+      }
+    });
+  }, [
+    abortInFlightUpload,
+    applyPermissionOutcome,
+    cleanupCapturedTempFile,
+    clearRevealTimer,
+    setActiveDraft,
+    setActiveError,
+    setFlowState,
+  ]);
 
   const handleConfirmDraft = useCallback(
     (draftToSave: VoiceDraftLike) => {
-      if (
-        draftToSave.amount === null ||
-        !Number.isSafeInteger(draftToSave.amount) ||
-        draftToSave.amount <= 0 ||
-        draftToSave.category === null
-      ) {
+      if (!hasValidConfirmableDraft(draftToSave)) {
         return;
       }
 
-      const categoryInfo = CATEGORIES[draftToSave.category] ?? CATEGORIES.other;
-      const resolvedNote =
-        draftToSave.description?.trim() ||
-        draftToSave.merchant?.trim() ||
-        draftToSave.recognized_text?.trim() ||
-        categoryInfo.name;
-
-      ledger?.addTransaction({
-        amount: draftToSave.amount,
-        categoryId: draftToSave.category,
-        note: resolvedNote,
-        date: draftToSave.occurred_on ?? ledger.selectedDate ?? formatCurrentIsoDate(),
-        time: extractTimeFromDraft(draftToSave),
-      });
-
+      const fallbackDate = ledger?.selectedDate ?? formatCurrentIsoDate();
+      ledger?.addTransaction(draftToTransactionInput(draftToSave, fallbackDate));
       handleClose();
     },
     [handleClose, ledger]
@@ -604,7 +637,7 @@ function VoiceCaptureModalBody({
                 </View>
               )}
 
-              {!isCapturedFallback && flowState === 'review' && activeDraft && (
+              {!isCapturedFallback && !onDraftReady && flowState === 'review' && activeDraft && (
                 <VoiceDraftReviewSheet
                   draft={activeDraft}
                   onConfirm={handleConfirmDraft}

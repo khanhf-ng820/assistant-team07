@@ -47,6 +47,20 @@ export const METERING_MIN_DB = -60;
 export const METERING_MAX_DB = 0;
 
 /**
+ * Resolves a bounded recording duration in `[1, MAX_RECORDING_DURATION_MS]`,
+ * falling back to JS elapsed milliseconds when native polling has not updated yet.
+ */
+export function clampRecordingDurationMs(rawDurationMs: number, fallbackElapsedMs = 1): number {
+  const candidate =
+    Number.isFinite(rawDurationMs) && rawDurationMs > 0
+      ? rawDurationMs
+      : Number.isFinite(fallbackElapsedMs) && fallbackElapsedMs > 0
+        ? fallbackElapsedMs
+        : 1;
+  return Math.min(MAX_RECORDING_DURATION_MS, Math.max(1, Math.round(candidate)));
+}
+
+/**
  * Normalizes a dBFS metering reading from [-60, 0] into [0, 1].
  * Returns null when metering is unavailable or non-finite.
  */
@@ -147,6 +161,7 @@ export function useExpoVoiceRecorderAdapter(): VoiceRecorderAdapter {
   const recorderRef = useRef(recorder);
   const recorderStateRef = useRef(recorderState);
   const activeSessionRef = useRef(false);
+  const startedAtMsRef = useRef<number | null>(null);
 
   useEffect(() => {
     recorderRef.current = recorder;
@@ -174,19 +189,24 @@ export function useExpoVoiceRecorderAdapter(): VoiceRecorderAdapter {
     try {
       await recorderRef.current.prepareToRecordAsync(getVoiceRecordingOptions());
       activeSessionRef.current = true;
+      startedAtMsRef.current = Date.now();
       recorderRef.current.record({ forDuration: MAX_RECORDING_SECONDS });
     } catch (error) {
       activeSessionRef.current = false;
+      startedAtMsRef.current = null;
       await setAudioModeAsync({ allowsRecording: false }).catch(() => {});
       throw error;
     }
   }, [setAudioModeAsync]);
 
   const stop = useCallback(async (): Promise<VoiceRecordingResult | null> => {
+    const elapsedMs =
+      startedAtMsRef.current !== null ? Math.max(1, Date.now() - startedAtMsRef.current) : 1;
     try {
       await recorderRef.current.stop();
     } finally {
       activeSessionRef.current = false;
+      startedAtMsRef.current = null;
       await setAudioModeAsync({ allowsRecording: false }).catch(() => {});
     }
 
@@ -197,7 +217,7 @@ export function useExpoVoiceRecorderAdapter(): VoiceRecorderAdapter {
 
     return {
       uri,
-      durationMillis: recorderStateRef.current.durationMillis,
+      durationMillis: clampRecordingDurationMs(recorderStateRef.current.durationMillis, elapsedMs),
       mimeType: inferMimeTypeFromUri(uri),
     };
   }, [setAudioModeAsync]);
@@ -215,6 +235,7 @@ export function useExpoVoiceRecorderAdapter(): VoiceRecorderAdapter {
       }
     } finally {
       activeSessionRef.current = false;
+      startedAtMsRef.current = null;
       await setAudioModeAsync({ allowsRecording: false }).catch(() => {});
       const uri = currentRecorder.uri ?? recorderStateRef.current.url;
       deleteTempRecording(uri);
@@ -234,6 +255,7 @@ export function useExpoVoiceRecorderAdapter(): VoiceRecorderAdapter {
       }
 
       activeSessionRef.current = false;
+      startedAtMsRef.current = null;
       const uri = currentRecorder.uri ?? recorderStateRef.current.url;
       void Promise.resolve(currentRecorder.stop())
         .catch(() => {})

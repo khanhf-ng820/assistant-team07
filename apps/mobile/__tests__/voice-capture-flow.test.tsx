@@ -81,7 +81,7 @@ describe('Voice Capture end-to-end upload, reveal & review flow (#115)', () => {
     jest.useRealTimers();
   });
 
-  it('uploads audio, displays loading without fake transcript, deletes temp file in finally, progressively reveals recognized_text, invokes onDraftReady, and only mutates ledger on explicit Xác nhận', async () => {
+  it('uploads audio, displays loading without fake transcript, deletes temp file in finally, progressively reveals recognized_text, invokes onDraftReady, and closes without rendering built-in review sheet', async () => {
     const adapter = createFakeVoiceAdapter();
     const deferred = createDeferred<VoiceCaptureDraft>();
     const parseVoiceCapture = jest.fn(
@@ -155,7 +155,7 @@ describe('Voice Capture end-to-end upload, reveal & review flow (#115)', () => {
     // Temp file must be deleted in finally as soon as upload settles
     expect(adapter.deleteTempFile).toHaveBeenCalledWith('file:///tmp/voice-115.m4a');
 
-    // Progressive reveal starts in 'revealing' before full review
+    // Progressive reveal starts in 'revealing' before emitting onDraftReady
     expect(screen.getByTestId('flow-state')).toHaveTextContent('revealing');
     expect(onDraftReady).not.toHaveBeenCalled();
 
@@ -165,7 +165,54 @@ describe('Voice Capture end-to-end upload, reveal & review flow (#115)', () => {
     expect(firstRevealText.length).toBeLessThan(serverDraft.recognized_text!.length);
     expect(serverDraft.recognized_text!.startsWith(firstRevealText)).toBe(true);
 
-    // Advance timers through progressive reveal to review handoff
+    // Advance timers through progressive reveal to onDraftReady handoff
+    await act(async () => {
+      jest.advanceTimersByTime(1000);
+    });
+
+    await waitFor(() => {
+      expect(onDraftReady).toHaveBeenCalledTimes(1);
+    });
+    expect(onDraftReady).toHaveBeenCalledWith(serverDraft);
+    expect(screen.getByTestId('flow-state')).toHaveTextContent('idle');
+    expect(screen.queryByTestId('voice-draft-review-sheet')).toBeNull();
+    expect(Number(screen.getByTestId('tx-count').props.children)).toBe(initialTxCount);
+    expect(Number(screen.getByTestId('balance').props.children)).toBe(initialBalance);
+  });
+
+  it('renders built-in VoiceDraftReviewSheet fallback when onDraftReady is absent and only mutates ledger on explicit Xác nhận', async () => {
+    const adapter = createFakeVoiceAdapter();
+    const serverDraft: VoiceCaptureDraft = {
+      amount: 35_000,
+      currency: 'VND',
+      category: 'food',
+      merchant: 'Quán cơm Ba Ghiền',
+      description: 'Cơm sườn 35k',
+      recognized_text: 'Cơm sườn ba mươi lăm nghìn',
+      occurred_on: '2026-11-28',
+      timestamp: '2026-11-28T12:15:00+07:00',
+      uncertain_fields: [],
+      has_low_confidence: false,
+    };
+    const parseVoiceCapture = jest.fn(async () => serverDraft);
+
+    await render(
+      <LedgerProvider>
+        <VoiceCaptureProvider>
+          <FlowObserver />
+          <CaptureChooser visible onClose={jest.fn()} />
+          <VoiceCaptureModal adapter={adapter} parseVoiceCapture={parseVoiceCapture} />
+        </VoiceCaptureProvider>
+      </LedgerProvider>
+    );
+
+    const initialTxCount = Number(screen.getByTestId('tx-count').props.children);
+    const initialBalance = Number(screen.getByTestId('balance').props.children);
+
+    await fireEvent.press(screen.getByRole('button', { name: 'Ghi âm' }));
+    await waitFor(() => expect(screen.getByTestId('voice-recording-bar')).toBeTruthy());
+    await fireEvent.press(screen.getByRole('button', { name: 'Dừng ghi âm' }));
+
     await act(async () => {
       jest.advanceTimersByTime(1000);
     });
@@ -173,8 +220,6 @@ describe('Voice Capture end-to-end upload, reveal & review flow (#115)', () => {
     await waitFor(() => {
       expect(screen.getByTestId('flow-state')).toHaveTextContent('review');
     });
-    expect(onDraftReady).toHaveBeenCalledTimes(1);
-    expect(onDraftReady).toHaveBeenCalledWith(serverDraft);
 
     // Built-in review sheet displays draft details and has NOT mutated ledger yet
     expect(screen.getByTestId('voice-draft-review-sheet')).toBeVisible();
@@ -192,6 +237,84 @@ describe('Voice Capture end-to-end upload, reveal & review flow (#115)', () => {
     expect(Number(screen.getByTestId('tx-count').props.children)).toBe(initialTxCount + 1);
     expect(Number(screen.getByTestId('balance').props.children)).toBe(initialBalance - 35_000);
     expect(screen.getByTestId('flow-state')).toHaveTextContent('idle');
+  });
+
+  it('clamps fast-stop (durationMillis: 0) and 30s overshoot (durationMillis: 30_080) duration_ms into [1, 30_000]', async () => {
+    const parseVoiceCapture = jest.fn<
+      Promise<VoiceCaptureDraft>,
+      [VoiceCaptureRequest, RequestOptions?]
+    >(
+      async (): Promise<VoiceCaptureDraft> => ({
+        amount: 20_000,
+        currency: 'VND',
+        category: 'food',
+        merchant: null,
+        description: 'Trà sữa 20k',
+        recognized_text: 'Trà sữa hai mươi nghìn',
+        occurred_on: '2026-11-28',
+        timestamp: null,
+        uncertain_fields: [],
+        has_low_confidence: false,
+      })
+    );
+
+    const stopResults: VoiceRecordingResult[] = [
+      { uri: 'file:///tmp/fast.m4a', durationMillis: 0, mimeType: 'audio/m4a' },
+      { uri: 'file:///tmp/overshoot.m4a', durationMillis: 30_080, mimeType: 'audio/m4a' },
+    ];
+    const adapter = createFakeVoiceAdapter({
+      stop: jest.fn(async () => stopResults.shift()!),
+    });
+
+    await render(
+      <LedgerProvider>
+        <VoiceCaptureProvider>
+          <VoiceCaptureModal
+            visible
+            adapter={adapter}
+            parseVoiceCapture={parseVoiceCapture}
+            onDraftReady={jest.fn()}
+          />
+        </VoiceCaptureProvider>
+      </LedgerProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('voice-recording-bar')).toBeTruthy());
+    await fireEvent.press(screen.getByRole('button', { name: 'Dừng ghi âm' }));
+
+    await waitFor(() => {
+      expect(parseVoiceCapture).toHaveBeenCalledTimes(1);
+    });
+    const firstDuration = parseVoiceCapture.mock.calls[0]?.[0].duration_ms;
+    expect(firstDuration).toBeGreaterThanOrEqual(1);
+    expect(firstDuration).toBeLessThanOrEqual(30_000);
+
+    await act(async () => {
+      jest.advanceTimersByTime(1000);
+    });
+
+    const secondRender = await render(
+      <LedgerProvider>
+        <VoiceCaptureProvider>
+          <VoiceCaptureModal
+            visible
+            adapter={adapter}
+            parseVoiceCapture={parseVoiceCapture}
+            onDraftReady={jest.fn()}
+          />
+        </VoiceCaptureProvider>
+      </LedgerProvider>
+    );
+    await waitFor(() => expect(secondRender.getByTestId('voice-recording-bar')).toBeTruthy());
+    await fireEvent.press(secondRender.getByRole('button', { name: 'Dừng ghi âm' }));
+
+    await waitFor(() => {
+      expect(parseVoiceCapture).toHaveBeenCalledTimes(2);
+    });
+    const secondDuration = parseVoiceCapture.mock.calls[1]?.[0].duration_ms;
+    expect(secondDuration).toBeGreaterThanOrEqual(1);
+    expect(secondDuration).toBeLessThanOrEqual(30_000);
+    expect(secondDuration).toBe(30_000);
   });
 
   it('disables Xác nhận for ambiguous/negation drafts (amount: null, has_low_confidence, uncertain_fields) and supports Sửa thủ công / Hủy without ledger mutation', async () => {

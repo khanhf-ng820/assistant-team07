@@ -8,6 +8,7 @@ import math
 import re
 import threading
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal, Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -225,8 +226,102 @@ class UnavailableVoiceParser:
         )
 
 
+def to_vietnam_local_time(value: dt.datetime | None = None) -> dt.datetime:
+    """Convert a naive or aware datetime (defaulting to now) into Asia/Ho_Chi_Minh."""
+    if value is None:
+        return dt.datetime.now(VIETNAM_TZ)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=VIETNAM_TZ)
+    return value.astimezone(VIETNAM_TZ)
+
+
 def _in_vnd_bounds(value: int) -> int | None:
     return value if MIN_VND_AMOUNT <= value <= MAX_VND_AMOUNT else None
+
+
+@dataclass
+class _VnWordPhraseAccumulator:
+    total: int = 0
+    current_group: int = 0
+    pending: int = 0
+    last_scale: int | None = None
+    pending_half: bool = False
+    saw_explicit_sub_unit: bool = False
+    consumed_any: bool = False
+
+    def apply_sub_unit(self, tok: str) -> bool:
+        if tok == "mười":
+            self.current_group += self.pending + 10
+            self.pending = 0
+        elif tok in {"chục", "mươi"}:
+            if self.pending == 0 and tok == "chục":
+                self.current_group += 10
+            elif self.pending > 0:
+                self.current_group += self.pending * 10
+                self.pending = 0
+            else:
+                return False
+        elif tok == "trăm":
+            self.current_group += (self.pending or 1) * 100
+            self.pending = 0
+        self.saw_explicit_sub_unit = True
+        self.consumed_any = True
+        return True
+
+    def apply_ruoi(self) -> bool:
+        if self.current_group > 0 or self.pending > 0:
+            if self.last_scale is not None and not self.saw_explicit_sub_unit:
+                return False
+            if self.pending > 0:
+                self.current_group += self.pending
+                self.pending = 0
+            self.current_group += 50 if self.current_group >= 100 else 5
+        elif self.last_scale is not None:
+            self.total += self.last_scale // 2
+        else:
+            return False
+        self.consumed_any = True
+        return True
+
+    def apply_unit(self, scale: int) -> bool:
+        group_val = self.current_group + self.pending
+        if self.pending_half and group_val == 0:
+            self.total += scale // 2
+            self.pending_half = False
+        elif group_val > 0:
+            self.total += group_val * scale
+            self.current_group = 0
+            self.pending = 0
+        else:
+            return False
+        self.last_scale = scale
+        self.saw_explicit_sub_unit = False
+        self.consumed_any = True
+        return True
+
+    def finalize(self) -> int | None:
+        if not self.consumed_any or self.pending_half:
+            return None
+        rem = self.current_group + self.pending
+        if rem > 0:
+            self.total += _scale_trailing_remainder(
+                rem, self.last_scale, self.saw_explicit_sub_unit
+            )
+        return _in_vnd_bounds(self.total)
+
+
+def _scale_trailing_remainder(
+    rem: int, last_scale: int | None, saw_explicit_sub_unit: bool
+) -> int:
+    if last_scale is None or saw_explicit_sub_unit or rem >= 1000:
+        return rem
+    if rem < 10:
+        return rem * (last_scale // 10)
+    if rem < 100 and last_scale >= 10_000:
+        return rem * (last_scale // 100)
+    if last_scale >= 1_000_000:
+        return rem * (last_scale // 1_000)
+    return rem
 
 
 def _parse_vn_word_phrase(cleaned: str) -> int | None:
@@ -234,102 +329,28 @@ def _parse_vn_word_phrase(cleaned: str) -> int | None:
     if not tokens:
         return None
 
-    total = 0
-    current_group = 0
-    pending = 0
-    last_scale: int | None = None
-    pending_half = False
-    saw_explicit_sub_unit = False
-    consumed_any = False
-
+    acc = _VnWordPhraseAccumulator()
     for tok in tokens:
         if tok == "nửa":
-            pending_half = True
-            consumed_any = True
-            continue
-        if tok == "mười":
-            current_group += pending + 10
-            pending = 0
-            saw_explicit_sub_unit = True
-            consumed_any = True
-            continue
-        if tok in {"chục", "mươi"}:
-            if pending == 0 and tok == "chục":
-                current_group += 10
-            elif pending > 0:
-                current_group += pending * 10
-                pending = 0
-            else:
+            acc.pending_half = True
+            acc.consumed_any = True
+        elif tok in {"mười", "chục", "mươi", "trăm"}:
+            if not acc.apply_sub_unit(tok):
                 return None
-            saw_explicit_sub_unit = True
-            consumed_any = True
-            continue
-        if tok == "trăm":
-            current_group += (pending or 1) * 100
-            pending = 0
-            saw_explicit_sub_unit = True
-            consumed_any = True
-            continue
-        if tok == "rưỡi":
-            if current_group > 0 or pending > 0:
-                if last_scale is not None and not saw_explicit_sub_unit:
-                    return None
-                if pending > 0:
-                    current_group += pending
-                    pending = 0
-                current_group += 50 if current_group >= 100 else 5
-            elif last_scale is not None:
-                total += last_scale // 2
-            else:
+        elif tok == "rưỡi":
+            if not acc.apply_ruoi():
                 return None
-            consumed_any = True
-            continue
-        if tok in _VN_DIGITS:
-            current_group += pending
-            pending = _VN_DIGITS[tok]
-            consumed_any = True
-            continue
-        if tok.isdigit():
-            current_group += pending
-            pending = int(tok)
-            consumed_any = True
-            continue
-        if tok in _UNIT_MULTIPLIERS:
-            scale = _UNIT_MULTIPLIERS[tok]
-            group_val = current_group + pending
-            if pending_half and group_val == 0:
-                total += scale // 2
-                pending_half = False
-            elif group_val > 0:
-                total += group_val * scale
-                current_group = 0
-                pending = 0
-            else:
+        elif tok in _VN_DIGITS or tok.isdigit():
+            acc.current_group += acc.pending
+            acc.pending = _VN_DIGITS[tok] if tok in _VN_DIGITS else int(tok)
+            acc.consumed_any = True
+        elif tok in _UNIT_MULTIPLIERS:
+            if not acc.apply_unit(_UNIT_MULTIPLIERS[tok]):
                 return None
-            last_scale = scale
-            saw_explicit_sub_unit = False
-            consumed_any = True
-            continue
-        return None
-
-    if not consumed_any or pending_half:
-        return None
-
-    rem = current_group + pending
-    if rem > 0:
-        if last_scale is not None and not saw_explicit_sub_unit and rem < 1000:
-            if rem < 10:
-                total += rem * (last_scale // 10)
-            elif rem < 100 and last_scale >= 10_000:
-                total += rem * (last_scale // 100)
-            elif last_scale >= 1_000_000:
-                total += rem * (last_scale // 1_000)
-            else:
-                total += rem
         else:
-            total += rem
+            return None
 
-    return _in_vnd_bounds(total)
+    return acc.finalize()
 
 
 def parse_vietnamese_amount(value: object) -> int | None:
@@ -403,14 +424,6 @@ def _find_amount_mentions(text: str) -> list[str]:
     return [m.group(0).strip() for m in _TEXT_AMOUNT_SPAN_RE.finditer(text)]
 
 
-def _resolve_local_now(now: dt.datetime | None) -> dt.datetime:
-    if now is None:
-        return dt.datetime.now(VIETNAM_TZ)
-    if now.tzinfo is None:
-        return now.replace(tzinfo=VIETNAM_TZ)
-    return now.astimezone(VIETNAM_TZ)
-
-
 def _resolve_relative_date(text: str, local_today: dt.date) -> dt.date | None:
     lowered = text.lower()
     for phrases, offset in _RELATIVE_DAY_OFFSETS:
@@ -456,17 +469,13 @@ def _resolve_timestamp(
     occurred_on: dt.date | None,
 ) -> dt.datetime | None:
     if isinstance(raw_timestamp, dt.datetime):
-        if raw_timestamp.tzinfo is None:
-            return raw_timestamp.replace(tzinfo=VIETNAM_TZ)
-        return raw_timestamp.astimezone(VIETNAM_TZ)
+        return to_vietnam_local_time(raw_timestamp)
     if isinstance(raw_timestamp, str):
         cleaned = raw_timestamp.strip()
         if cleaned:
             try:
                 parsed = dt.datetime.fromisoformat(cleaned.replace("Z", "+00:00"))
-                if parsed.tzinfo is None:
-                    return parsed.replace(tzinfo=VIETNAM_TZ)
-                return parsed.astimezone(VIETNAM_TZ)
+                return to_vietnam_local_time(parsed)
             except ValueError:
                 pass
 
@@ -517,7 +526,7 @@ def normalize_voice_draft(
 ) -> VoiceCaptureDraft:
     """Deterministically normalize and bound a parser response into a VoiceCaptureDraft."""
     data = raw.model_dump() if isinstance(raw, VoiceCaptureDraft) else dict(raw)
-    local_now = _resolve_local_now(now)
+    local_now = to_vietnam_local_time(now)
     local_today = local_now.date()
 
     recognized_text = _clean_optional_text(data.get("recognized_text"))
@@ -602,10 +611,7 @@ class VoiceQuotaTracker:
         self._user_counts: dict[str, int] = {}
 
     def _local_date(self) -> dt.date:
-        now = self._clock()
-        if now.tzinfo is None:
-            return now.date()
-        return now.astimezone(VIETNAM_TZ).date()
+        return to_vietnam_local_time(self._clock()).date()
 
     def consume(self, user_id: str) -> None:
         """Reserve one daily Voice Capture slot for user_id or fail closed with 429."""

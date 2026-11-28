@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.errors import ApiHttpError
 from app.settings import DEFAULT_GEMINI_MODEL, DEFAULT_GEMINI_TIMEOUT_MS, GeminiSettings
-from app.voice_capture import VIETNAM_TZ, VoiceCaptureDraft, normalize_voice_draft
+from app.voice_capture import VoiceCaptureDraft, normalize_voice_draft, to_vietnam_local_time
 
 _RETRY_STATUS_CODES = [408, 429, 500, 502, 503, 504]
 _BLOCKED_FINISH_REASONS = frozenset(
@@ -62,13 +62,6 @@ def build_gemini_client(settings: GeminiSettings) -> genai.Client:
             ),
         ),
     )
-
-
-def _resolve_reference_now(clock: Callable[[], dt.datetime] | None) -> dt.datetime:
-    now = dt.datetime.now(VIETNAM_TZ) if clock is None else clock()
-    if now.tzinfo is None:
-        return now.replace(tzinfo=VIETNAM_TZ)
-    return now.astimezone(VIETNAM_TZ)
 
 
 def _build_voice_prompt(reference_now: dt.datetime, duration_ms: int | None) -> str:
@@ -179,7 +172,7 @@ class GeminiVoiceParser:
         *,
         duration_ms: int | None = None,
     ) -> VoiceCaptureDraft:
-        reference_now = _resolve_reference_now(self._clock)
+        reference_now = to_vietnam_local_time(self._clock() if self._clock is not None else None)
         prompt = _build_voice_prompt(reference_now, duration_ms)
         audio_part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
 
